@@ -1,0 +1,9 @@
+<behavior name='imager'>
+	<metadata />
+	<filter name='orientation' type='orient' />
+	<filter name='blur' class='\Prado\Web\Assets\Behaviors\Filters\TBlurImagerFilter' />
+	<filter type='grayscale' />
+	<filter name='mask' type='circlemask' />
+	<filter name='Convolution' type='convolution' Matrix="([1, 0, 1], [0, 3, 0], [1, 0, 1])"/>
+	<!-- all filters need to go here to test them. -->
+</behavior>

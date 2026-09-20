@@ -1,0 +1,78 @@
+; Error messages for belisoful/prado-publishing.
+;
+; Format, as parsed by Prado\Exceptions\TException::translateErrorMessage():
+;
+;     message_key		= The text, with {0} {1} placeholders for the exception arguments.
+;
+; Blank lines are ignored, and a line starting with '#' or ';' is a comment.  Register this
+; file with TException::addMessageFile(__DIR__ . '/errorMessages.txt'); a localized sibling
+; named errorMessages-<lang>.txt is preferred automatically when one exists.  An unregistered
+; key still works — the exception carries the key itself as its message — so registration
+; affects readability, not behavior.
+;
+; The package also raises keys defined in the framework's own messages.txt:
+;
+;     assetmanager_filepath_invalid			  (TAsset, TPublishingManager)
+;     assetmanager_source_directory_invalid	  (TAssetManager::copyDirectory, inherited)
+;     assetmanager_tarchecksum_invalid		  (TTarAsset)
+;     assetmanager_tarfile_invalid			  (TTarAsset)
+;
+; Do not restate a core key here.  The framework's messages.txt is consulted last and wins, so
+; a duplicate would never be read.  Add a key below only when this package raises it itself.
+
+publishingmanager_filepath_invalid			= TPublishingManager is publishing an invalid file '{0}'.
+publishingmanager_invalid_class				= TPublishingManager asset class '{0}' does not exist or does not implement Prado\Web\Assets\IAsset.
+publishingmanager_invalid_asset				= TPublishingManager cannot publish a '{0}' because it is not an asset file path or a Prado\Web\Assets\IAsset.
+publishingmanager_invalid_tar_class			= TPublishingManager.DefaultTarAssetClass '{0}' must be a Prado\Web\Assets\TTarAsset.
+publishingmanager_requires_class			= TPublishingManager.onDiscoverClass handler cleared the asset class; a handler must leave a class name.
+
+asset_filepath_invalid						= TAsset.AssetFilePath '{0}' is invalid.
+asset_assetfilepath_invalid					= TAsset cannot publish because its AssetFilePath '{0}' is invalid.
+asseteventparameter_finalizer_invalid		= TAssetEventParameter finalizer '{0}' must implement Prado\Web\Assets\IAssetFinalizer.
+asset_dst_filepath_invalid					= TAsset cannot publish to an empty destination file path '{0}'.
+
+tarasset_conflictmode_invalid				= TTarAsset.ConflictMode '{0}' is not a TTarFileExtractor conflict mode.
+tarasset_checksum_mismatch					= TTarAsset archive '{0}' does not match its checksum file '{1}'.
+tarasset_extract_failed						= TTarAsset could not extract the archive '{0}' to '{1}'.
+
+assetcompress_read_failed					= TAssetCompress cannot read the published file '{0}'.
+assetcompress_write_failed					= TAssetCompress cannot write the compressed file '{0}'.
+assetcompress_method_invalid				= TAssetCompress.Method '{0}' is not a content coding of Prado\IO\Compression\TCompression.
+assetcompress_extension_required			= TAssetCompress.Compressor '{0}' has an unknown format; set the Extension.
+assetcompress_compressor_invalid			= TAssetCompress.Compressor '{0}' is not a Prado\IO\Compression\ICompressor class.
+
+assetdiscovery_requires_class				= TAssetDiscovery.RoutedClass is required to route matching asset file paths.
+assetduplicate_recursive					= TAssetDuplicate is recursing: MatchFiles '{0}' with MatchReplacement '{1}' still matches the duplicate '{2}'.
+assetvirtualize_no_alias_self				= TAssetVirtualize.MapFromVirtual '{1}' with VirtualFiles '{0}' maps the virtual file path '{2}' to itself.
+assetvirtualize_no_publish_as_original		= TAssetVirtualize.MapToVirtual '{1}' with OriginalFiles '{0}' does not map the file path '{2}' to a virtual file path.
+
+assetimagefilter_bad_tiff_compression		= TAssetImageFilter.TiffCompression '{0}' is not a Prado\IO\Image\TTIFF compression.
+assetimagerbase_filterfile_not_load			= TAssetImagerBase.FilterFile '{0}' could not be loaded.
+assetimagerbase_bad_metaclass				= TAssetImagerBase.MetaClass '{0}' is not a Prado\Web\Assets\Behaviors\TAssetImageMetaData class.
+
+imagerfilterfactory_config_array_required	= An imager filter configuration must be an array or an XML element.
+imagerfilterfactory_no_filter_type			= The imager filter '{0}' requires a 'class' or a 'type'.
+imagerfilterfactory_bad_type				= The imager filter type '{0}' is not a known filter type.
+imagerfilterfactory_cannot_class_type		= An imager filter cannot have both a class '{0}' and a type '{1}'.
+imagerfilterfactory_bad_class				= The imager filter class '{0}' must be an instantiable Prado\Web\Assets\Behaviors\Filters\IBaseImagerFilter class.
+
+metadata_bad_mode							= TAssetImageMetaData.MetaInterpolationMode '{0}' is invalid.
+metadata_bad_jfif_size						= TAssetImageMetaData.JFIFSize '{0}' is invalid; it must be "width" or "width x height".
+metadata_jfif_size_too_large				= TAssetImageMetaData.JFIFSize '{0}x{1}' is too large; each dimension must be 255 or less.
+metadata_bad_jfif_mode						= TAssetImageMetaData.JFIFMode '{0}' is not a Prado\IO\Image\Meta\TJFIFFormat mode.
+metadata_bad_exif_thumbnail_size			= TAssetImageMetaData.ExifThumbnailSize '{0}' is invalid; it must be "width" or "width x height".
+metadata_bad_scrub							= TAssetImageMetaData.Scrub '{0}' is not a Prado\IO\Image\TPrivacyCategory name.
+metadata_bad_field							= TAssetImageMetaData field '{0}' is not a known IPTC, EXIF, or XMP field.
+
+metadatafilter_bad_field					= TMetaDataImagerFilter <meta> name '{0}' is not a known IPTC, EXIF, or XMP field.
+autocropimagerfilter_bad_crop_mode			= TAutoCropImagerFilter.CropMode '{0}' is invalid.
+convolutionfilter_bad_matrix				= TConvolutionImagerFilter.Matrix must be a 3x3 matrix.
+gammacorrectimagerfilter_bad_gamma			= TGammaCorrectImagerFilter gamma '{0}' is invalid; it must be greater than 0.
+filterimagerfilter_bad_effect				= TFilterImagerFilter.Effect '{0}' is invalid.
+imageimagerfilter_bad_mode					= TImageImagerFilter.ImageInterpolationMode '{0}' is invalid.
+imageimagerfilter_bad_image_file_path		= TImageImagerFilter image file '{0}' does not exist in namespace '{1}'.
+resizeimagerfilter_bad_max_pixel_format		= TResizeImagerFilter.MaximumPixels '{0}' is invalid; it must be "pixels" or "width x height".
+resizeimagerfilter_bad_mode					= TResizeImagerFilter.ResizeMode '{0}' is invalid.
+textimagerfilter_bad_font_namespace			= TTextImagerFilter.FontNamespace path '{0}' does not exist.
+textimagerfilter_bad_gd_font				= TTextImagerFilter.GDFont '{0}' is not a valid GD font.
+textimagerfilter_gdf_bad_endian				= TTextImagerFilter.GDFont '{0}' is not in this machine's byte order; publish it as a TGDFAsset to convert it.

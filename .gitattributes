@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Keep the release archive to the runtime code.
+/.github            export-ignore
+/tests              export-ignore
+/.gitattributes     export-ignore
+/.gitignore         export-ignore
+/.php-cs-fixer.dist.php export-ignore
+/phpunit.xml        export-ignore

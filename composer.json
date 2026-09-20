@@ -1,0 +1,68 @@
+{
+    "name": "belisoful/prado-publishing",
+    "description": "Prado TPublishingManager: a TAssetManager that publishes files through asset objects and behaviors, with image processing, format conversion, and image metadata preservation and scrubbing.",
+    "type": "library",
+    "keywords": ["prado", "assets", "publishing", "asset-manager", "images", "gd"],
+    "homepage": "https://github.com/belisoful/prado-publishing",
+    "license": "BSD-3-Clause",
+    "authors": [
+        {
+            "name": "Brad Anderson",
+            "email": "belisoful@icloud.com"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/belisoful/prado-publishing/issues",
+        "source": "https://github.com/belisoful/prado-publishing"
+    },
+    "require": {
+        "php": ">=8.1",
+        "belisoful/prado-image": "^0.1.0",
+        "pradosoft/prado": "^4.4@dev"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0",
+        "friendsofphp/php-cs-fixer": "^3.95"
+    },
+    "suggest": {
+        "ext-gd": "Image assets: the imager behaviors, format conversions, and filters.",
+        "ext-imagick": "Reading and writing images GD cannot, and Imagick image filters.",
+        "ext-dom": "Reading and writing XMP image metadata.",
+        "ext-iconv": "IPTC image metadata character set conversion.",
+        "ext-zlib": "TAssetCompress gzip and deflate, and PNG image metadata chunks.",
+        "ext-brotli": "TAssetCompress br coding.",
+        "ext-zstd": "TAssetCompress zstd coding.",
+        "belisoful/prado-compression": "Command-backed codecs for TAssetCompress when a compression extension is missing."
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "repositories": [
+        {
+            "type": "composer",
+            "url": "https://asset-packagist.org"
+        }
+    ],
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "composer/installers": true,
+            "oomphinc/composer-installers-extender": true
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "Prado\\Web\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Prado\\Web\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "fix": "php-cs-fixer fix",
+        "style": "php-cs-fixer fix --dry-run --diff",
+        "test": "phpunit",
+        "coverage": "phpunit --coverage-text"
+    }
+}
