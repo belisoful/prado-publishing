@@ -244,14 +244,27 @@ carrier-prefixed names (`IPTC:Copyright`, `EXIF:Copyright`, `XMP:dc:title`).
 
 ## Prado integration
 
-The `config/` directory holds the package's declarative configuration:
+The package is a Composer Prado extension (`"type": "prado4-extension"`), and its `config/`
+directory holds its declarative configuration:
 
 | File | Purpose |
 |------|---------|
 | `config/classMap.json` | Prado3-style short name to fully qualified name, for `Prado::registerClassMap()` |
 | `config/errorMessages.txt` | Package error messages, for `TException::addMessageFile()` |
 
-Neither is auto-discovered. An application (or a plugin module) wires them once at start-up:
+Prado 4.4 loads both for every installed extension that declares them in `extra.prado`, before
+any module initializes, so an application does not wire them:
+
+```json
+"extra": {
+    "prado": {
+        "error-messages": "config/errorMessages.txt",
+        "class-map": "config/classMap.json"
+    }
+}
+```
+
+Outside a Prado application, or to load them by hand, they are a class map and a message file:
 
 ```php
 use Prado\Exceptions\TException;
@@ -279,6 +292,18 @@ messages still carry their key, so registration affects readability, not behavio
 ```bash
 composer require belisoful/prado-publishing
 ```
+
+Prado 4.4 has no stable release yet, so this package requires `pradosoft/prado: ^4.4@dev`, and
+the stability flag of a dependency does not carry to the project installing it.  A project that
+does not already allow development versions of Prado needs them:
+
+```bash
+composer config minimum-stability dev
+composer config prefer-stable true
+composer require belisoful/prado-publishing
+```
+
+`prefer-stable` keeps every other dependency on its stable release.
 
 ## Test
 

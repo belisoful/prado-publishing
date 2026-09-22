@@ -7,8 +7,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The publishing code, moved out of the Prado framework tree into its own package and rebuilt on
-the current `TAssetManager` and on `belisoful/prado-image`.
+## [0.1.0] - 2026-09-22
+
+The first release: the publishing code, moved out of the Prado framework tree into its own
+package and rebuilt on the current `TAssetManager` and on `belisoful/prado-image`.
 
 ### Added
 
@@ -104,7 +106,8 @@ the current `TAssetManager` and on `belisoful/prado-image`.
 - `TAssetDiscoverClassEventParameter::getIsClassSet()` — a handler routing a path to the default
   class is honored.
 - `config/classMap.json` and `config/errorMessages.txt`, with a message for every key the
-  package raises that the framework does not define.
+  package raises that the framework does not define.  The package is a `prado4-extension` and
+  declares both in `extra.prado`, so Prado 4.4 loads them for the application itself.
 - Tests: the framework's `TAssetManagerTest` runs against `TPublishingManager` with nothing
   skipped; and the package's own tests for the manager,
   the asset classes, the behaviors, the filters, and the image metadata on real image files.
@@ -190,4 +193,5 @@ the current `TAssetManager` and on `belisoful/prado-image`.
   bootstrap now says how to install the framework's tests when the package does not carry them.
 - Misspelled and outdated namespaces in the documentation (`\Prade\`, `Prado\Web\Asset\`).
 
-[Unreleased]: https://github.com/belisoful/prado-publishing/commits/main
+[Unreleased]: https://github.com/belisoful/prado-publishing/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/belisoful/prado-publishing/releases/tag/v0.1.0
