@@ -28,6 +28,9 @@ class TSuffixAssetBehavior extends TBehavior
 	/** @var int the number of dyAlterAssetFilePath calls received. */
 	public int $alterCount = 0;
 
+	/** @var bool whether dyAlterAssetFilePath returns false, an invalid publish path. */
+	public bool $invalid = false;
+
 	public function getSuffix(): string
 	{
 		return $this->suffix;
@@ -41,6 +44,9 @@ class TSuffixAssetBehavior extends TBehavior
 	public function dyAlterAssetFilePath($filePath, $callchain = null)
 	{
 		$this->alterCount++;
+		if ($this->invalid) {
+			return false;
+		}
 		if (!empty($filePath) && substr($filePath, -1) !== DIRECTORY_SEPARATOR) {
 			$filePath .= $this->suffix;
 		}

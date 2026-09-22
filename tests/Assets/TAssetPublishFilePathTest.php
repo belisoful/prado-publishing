@@ -130,6 +130,23 @@ class TAssetPublishFilePathTest extends PublishingTestCase
 		self::assertSame('/virtual/other.json.third.renamed', $asset->getAssetPublishFilePath(), 'Turning the cache off drops it.');
 	}
 
+	public function testAnInvalidCachedPublishPathIsComputedOnce(): void
+	{
+		$asset = static::asset('/virtual/data.json');
+		$suffix = $asset->asa('suffix');
+		$suffix->invalid = true;
+		$asset->setCachePublishFilePath(true);
+
+		self::assertFalse($asset->getAssetPublishFilePath());
+		self::assertFalse($asset->getAssetPublishFilePath(), 'The cached invalid path is reused.');
+		self::assertSame(1, $suffix->alterCount, 'An invalid publish path is cached as well as a valid one.');
+
+		$asset->resetFilePathCache();
+		$suffix->invalid = false;
+		self::assertSame('/virtual/data.json.renamed', $asset->getAssetPublishFilePath(), 'Resetting the cache renames again.');
+		self::assertSame(2, $suffix->alterCount);
+	}
+
 	public function testACancelledPublishPathIsNotCached(): void
 	{
 		$asset = static::asset('/virtual/data.json', ['rewriteFilter' => fn ($path) => null]);

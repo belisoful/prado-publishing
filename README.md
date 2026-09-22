@@ -179,7 +179,8 @@ precedence over a built-in type of the same name. In code, `addFilter()`, `remov
 An imager reads the image with GD, then Imagick, and falls back to the prado-image container for
 a format neither decodes (TIFF). A filter implements `filterGdImage()`, `filterImagickImage()`,
 or both, and `getGraphicsMode()` follows from that: a filter of one library gets the image in
-that library, and a filter of both runs in whichever library the image is already in. The imager
+that library, and a filter of both, or one that overrides `filterImage()` itself, runs in
+whichever library the image is already in. The imager
 converts between them through a lossless PNG, which keeps the alpha channel, and leaves the
 image there for the filters that follow, so a chain can mix both libraries freely. A filter
 whose library is not installed is skipped.
@@ -201,7 +202,8 @@ The image is written back with GD where it can be (and with the saving propertie
 work), by the prado-image containers for GIF and TIFF, and by the graphics library for JPEG,
 PNG, and WebP when GD is missing. A format conversion only renames the published file when the
 image can be written in that format (`canEncode()`), so a file is never published under a name
-whose format it is not.
+whose format it is not; such an image publishes unprocessed, while an image that fails to
+encode or to write throws, rather than publishing the bytes from before the processing.
 
 ## Image metadata
 

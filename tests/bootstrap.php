@@ -18,8 +18,14 @@ require_once __DIR__ . '/../vendor/autoload.php';
 $pradoDir = dirname((new ReflectionClass(\Prado\Prado::class))->getFileName(), 2);
 $coreTests = $pradoDir . '/tests/unit';
 
-require_once $coreTests . '/PradoUnit.php';
-require_once $coreTests . '/Harness/IO/TarTestHelper.php';
-require_once $coreTests . '/Web/TAssetManagerTest.php';
+foreach (['/PradoUnit.php', '/Harness/IO/TarTestHelper.php', '/Web/TAssetManagerTest.php'] as $coreFile) {
+	if (!is_file($coreTests . $coreFile)) {
+		fwrite(STDERR, "The pradosoft/prado package at $pradoDir does not have tests/unit$coreFile.\n"
+			. "The suite runs the framework's own TAssetManagerTest against TPublishingManager, so\n"
+			. "install the package with its tests: composer update --prefer-source pradosoft/prado\n");
+		exit(1);
+	}
+	require_once $coreTests . $coreFile;
+}
 
-unset($pradoDir, $coreTests);
+unset($pradoDir, $coreTests, $coreFile);

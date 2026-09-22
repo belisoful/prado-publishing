@@ -822,9 +822,10 @@ class TAssetImageFilter extends TAssetImagerBase
 
 	/**
 	 * This saves the true color image back to the specified
-	 * file image format and palette colors.
+	 * file image format and palette colors.  An Imagick image is converted to GD for the
+	 * GD encoders and the saving properties, as {@see encodeImage} does.
 	 *
-	 * @param object|resource $image the image so save to file.
+	 * @param \GdImage|\Imagick|object $image the image so save to file.
 	 * @param int $type the original GD type of the image
 	 * @param ?int $paletteColors number of colors in the palette, 0 = true color
 	 * @param string $filePath the path to save the image to
@@ -833,6 +834,9 @@ class TAssetImageFilter extends TAssetImagerBase
 	public function saveImage($image, int $type, ?int $paletteColors, string $filePath): ?bool
 	{
 		if (static::hasGdEncoder($type)) {
+			if (!($image instanceof \GdImage) && ($gd = static::convertImage($image, TImageGraphicsMode::GD)) !== false) {
+				$image = $gd; // The saving properties and the GD encoders need a GD image.
+			}
 			return $this->writeImage($image, $type, $paletteColors, $filePath);
 		}
 		// A type GD cannot write, such as TIFF, is encoded by prado-image.

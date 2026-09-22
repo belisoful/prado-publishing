@@ -56,13 +56,17 @@ abstract class TBaseImagerFilter extends TComponent implements IBaseImagerFilter
 	 * The graphics library the filter works in, from the filter methods it implements:
 	 * {@see filterGdImage} alone gives GD, {@see filterImagickImage} alone gives Imagick,
 	 * and a filter that implements both works in either, so the imager runs it in the
-	 * library the image is already in.
+	 * library the image is already in.  A filter that implements neither, because it
+	 * overrides {@see filterImage} itself, also works in either: nothing here can tell
+	 * which library it needs, and requiring one would convert the image for it, and skip
+	 * it when that library is missing.  Such a filter overrides this method when it does
+	 * need a specific library.
 	 * @return ?string the graphics mode the filter needs, or null for either.
 	 */
 	public function getGraphicsMode(): ?string
 	{
 		[$gd, $imagick] = static::filterImplementations();
-		if ($gd && $imagick) {
+		if ($gd === $imagick) {
 			return null;
 		}
 		return $imagick ? TImageGraphicsMode::Imagick : TImageGraphicsMode::GD;

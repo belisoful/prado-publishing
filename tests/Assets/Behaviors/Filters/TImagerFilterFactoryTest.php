@@ -136,7 +136,8 @@ class TImagerFilterFactoryTest extends PublishingTestCase
 		self::assertSame(['effect' => 'GrayScale'], $config['filters']['gray']['properties'], 'An effect type becomes the effect.');
 		self::assertSame(['class' => TRecordingImagerFilter::class, 'properties' => ['result' => 'false'], 'config' => $config['filters']['xml1']['config']], $config['filters']['xml1']);
 
-		self::assertSame($config, TImagerFilterFactory::parse($doc, 'other'), 'An element is parsed once.');
+		self::assertSame($config, TImagerFilterFactory::parse($doc, 'xml'), 'An element is parsed once per name prefix.');
+		self::assertSame(['other0', 'gray', 'other1'], array_keys(TImagerFilterFactory::parse($doc, 'other')['filters']), 'Another name prefix names the filters without a name of its own.');
 		self::assertSame(['metadata' => null, 'filters' => []], TImagerFilterFactory::parse(static::xml('<behavior />')));
 	}
 

@@ -67,7 +67,7 @@ class TImagerFilterFactory
 	/** @var array<string, string> the registered filter types, lower case, and their classes. */
 	private static array $_types = [];
 
-	/** @var ?\WeakMap<TXmlElement, array> the parsed XML configurations. */
+	/** @var ?\WeakMap<TXmlElement, array<string, array>> the parsed XML configurations, by name prefix. */
 	private static ?\WeakMap $_parsed = null;
 
 	/**
@@ -130,8 +130,8 @@ class TImagerFilterFactory
 	 * Parses an imager configuration: a {@see TXmlElement} with `<metadata>` and `<filter>`
 	 * child elements, or an array with "metadata" and "filters" entries (or a list of
 	 * filters). A filter has a `type` or a `class`, and an optional `name`; its other
-	 * attributes are its properties. An XML element is parsed once; later calls return
-	 * the same result.
+	 * attributes are its properties. An XML element is parsed once per name prefix; later
+	 * calls with that prefix return the same result.
 	 * @param mixed $config the configuration.
 	 * @param string $namePrefix the name prefix of filters without a name, numbered in order.
 	 * @throws TConfigurationException when a filter is not an array or has neither a type nor a class.
@@ -143,7 +143,13 @@ class TImagerFilterFactory
 	{
 		if ($config instanceof TXmlElement) {
 			self::$_parsed ??= new \WeakMap();
-			return self::$_parsed[$config] ??= static::parseXml($config, $namePrefix);
+			// The memo is per name prefix, which names the filters that have no name.
+			$parsed = self::$_parsed[$config] ?? [];
+			if (!array_key_exists($namePrefix, $parsed)) {
+				$parsed[$namePrefix] = static::parseXml($config, $namePrefix);
+				self::$_parsed[$config] = $parsed;
+			}
+			return $parsed[$namePrefix];
 		}
 		$result = ['metadata' => null, 'filters' => []];
 		if (!is_array($config)) {

@@ -278,7 +278,9 @@ class TPublishingManager extends TAssetManager
 	 * with a source is copied file by file ({@see publishAssetDirectory}); a generated
 	 * directory populates itself ({@see publishGeneratedDirectory}); and a file is written
 	 * ({@see publishAssetFile}). The asset is tracked, and an {@see IPublishedCapture}
-	 * receives its path and URL.
+	 * receives its path and URL. A {@see \Prado\Web\Assets\TAsset} is given this manager
+	 * as its {@see \Prado\Web\Assets\TAsset::setAssetManager AssetManager}, so a directory
+	 * asset copies its files with the manager publishing it.
 	 *
 	 * The asset cache is keyed by the asset class and path, separately from the published
 	 * list of {@see getPublished}, so a path published as a string and as an asset object
@@ -300,6 +302,10 @@ class TPublishingManager extends TAssetManager
 	 */
 	public function routeAsset(IAsset $asset, $checkTimestamp = false, array $options = [], ?string $destination = null, ?string $sourcePath = null, bool $checkModification = false): string
 	{
+		if ($asset instanceof TAsset) {
+			// A directory asset copies its files with the manager publishing it.
+			$asset->setAssetManager($this);
+		}
 		$target = $destination === null ? $this->virtualAssetTarget($asset) : $this->destinationTarget($asset, $destination, $sourcePath);
 		if ($target === null) {
 			return '';

@@ -13,6 +13,7 @@ namespace Prado\Web\Assets\Behaviors;
 use Prado\Caching\TFileCacheDependency;
 use Prado\Exceptions\TConfigurationException;
 use Prado\Exceptions\TInvalidDataValueException;
+use Prado\Exceptions\TIOException;
 use Prado\IO\Image\IImageGraphicsLibrary;
 use Prado\IO\Image\TImageGraphics;
 use Prado\IO\Image\TImageGraphicsMode;
@@ -745,8 +746,18 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	 * written into it. Otherwise, when the metadata needs writing (an edit, a dropped
 	 * carrier, or a privacy scrub), only the metadata is rewritten, leaving the encoded
 	 * pixels untouched.
+	 *
+	 * An image type that no graphics library writes ({@see canEncode}) leaves the file
+	 * written before the processing in place, and the asset publishes unprocessed, as the
+	 * rename to that image type is skipped as well.  An image type that can be encoded but
+	 * fails to encode or to write throws instead of leaving those bytes: they are the
+	 * unprocessed source, and publishing them as the processed image would publish the
+	 * metadata a scrub removes, under the file name of a conversion that did not happen.
+	 * The manager removes the unfinished file.
 	 * @param string $dstFile the destination file to finalize
 	 * @param \Prado\Web\Assets\TAssetEventParameter $param
+	 * @throws TIOException when the image cannot be encoded as its image type, or the
+	 *   encoded image cannot be written to the destination.
 	 */
 	public function finalize($dstFile, $param)
 	{
@@ -756,14 +767,23 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 		$type = $param->getImageType();
 		$metaData = $param->getImageMetaData();
 		if ($param->getSaveImage() || $param->getOriginalImageType() !== $type) {
-			if ($metaData && $metaData->carriesMetaData($type)) {
+			if (!$this->canEncode($type)) {
+				// No graphics library writes the image type, so the file written before the
+				// processing stays and the asset publishes unprocessed, as the rename that
+				// would have named it that image type is skipped as well.
+				Prado::trace("The image of $dstFile cannot be encoded as image type $type; it publishes unprocessed", TAssetImagerBase::class);
+			} elseif ($metaData && $metaData->carriesMetaData($type)) {
 				// The image is encoded, the metadata is written into those bytes, and the
 				// file is written once, rather than saving the image and rewriting the file.
-				if (($bytes = $this->encodeImage($image, $type, $param->getPaletteColors())) !== false) {
-					@file_put_contents($dstFile, $metaData->writeImageBytes($bytes, $image, true));
+				if (($bytes = $this->encodeImage($image, $type, $param->getPaletteColors())) === false) {
+					throw new TIOException('assetimagerbase_encode_failed', $dstFile, $type);
 				}
-			} else {
-				$this->saveImage($image, $type, $param->getPaletteColors(), $dstFile);
+				$bytes = $metaData->writeImageBytes($bytes, $image, true);
+				if (@file_put_contents($dstFile, $bytes) !== strlen($bytes)) {
+					throw new TIOException('assetimagerbase_write_failed', $dstFile);
+				}
+			} elseif (!$this->saveImage($image, $type, $param->getPaletteColors(), $dstFile)) {
+				throw new TIOException('assetimagerbase_write_failed', $dstFile);
 			}
 		} elseif ($metaData && $metaData->getNeedsWrite()) {
 			$metaData->writeMetaData($dstFile, $image, false);
@@ -825,4 +845,14 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	 * @return false|string the encoded image, or false when it cannot be encoded.
 	 */
 	abstract public function encodeImage($image, int $type, ?int $paletteColors): false|string;
+
+	/**
+	 * Whether an image can be written as the image type, by {@see saveImage} or
+	 * {@see encodeImage}, with the graphics libraries installed.  A format conversion does
+	 * not rename a file to an image type it cannot write, and {@see finalize} leaves such
+	 * an image unprocessed.
+	 * @param int $type The GD image type.
+	 * @return bool whether the image type can be written.
+	 */
+	abstract public function canEncode(int $type): bool;
 }

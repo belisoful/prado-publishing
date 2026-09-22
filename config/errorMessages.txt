@@ -49,6 +49,8 @@ assetvirtualize_no_publish_as_original		= TAssetVirtualize.MapToVirtual '{1}' wi
 assetimagefilter_bad_tiff_compression		= TAssetImageFilter.TiffCompression '{0}' is not a Prado\IO\Image\TTIFF compression.
 assetimagerbase_filterfile_not_load			= TAssetImagerBase.FilterFile '{0}' could not be loaded.
 assetimagerbase_bad_metaclass				= TAssetImagerBase.MetaClass '{0}' is not a Prado\Web\Assets\Behaviors\TAssetImageMetaData class.
+assetimagerbase_encode_failed				= TAssetImagerBase could not encode the image of '{0}' as image type '{1}'.
+assetimagerbase_write_failed				= TAssetImagerBase could not write the image to '{0}'.
 
 imagerfilterfactory_config_array_required	= An imager filter configuration must be an array or an XML element.
 imagerfilterfactory_no_filter_type			= The imager filter '{0}' requires a 'class' or a 'type'.

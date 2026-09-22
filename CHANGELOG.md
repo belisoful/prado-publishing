@@ -32,6 +32,9 @@ the current `TAssetManager` and on `belisoful/prado-image`.
   Off by default, as the original is unprocessed.
 - `TAsset::getIsPassThrough()` — whether an asset writes its source unchanged, so `LinkAssets`
   does not link a converting asset such as `TGDFAsset`.
+- `TAsset::AssetManager` — the asset manager publishing the asset, which
+  `TPublishingManager::routeAsset()` sets, so a directory asset copies its files with the
+  manager publishing it rather than with the application's.
 - `Prado\Web\Assets` — the asset classes (`TAsset`, `TFileAsset`, `TImageAsset`, `TGDFAsset`),
   the asset behaviors, and the image filters.
 - `TAssetImageMetaData`, rebuilt on prado-image: EXIF, XMP, IPTC, and ICC profiles for JPEG,
@@ -172,6 +175,19 @@ the current `TAssetManager` and on `belisoful/prado-image`.
   checksum of a virtual archive before writing it, rejected `ConflictMode=""`, and a virtual
   archive without a checksum was never extracted; `TAssetDuplicate` passed the virtual path as
   a tar asset's checksum; and `imagedestroy()` calls are removed (deprecated in PHP 8.5).
+- From the second audit: `TAssetImageFilter::saveImage()` threw a `TypeError` on an Imagick
+  image, as a TIFF source published as a BMP, WBMP, or XBM is; `TAssetImagerBase::finalize()`
+  discarded a failed encode or write and published the bytes written before the processing as
+  the processed image, the unscrubbed source under the name of a conversion that did not
+  happen, and now throws, while only an image type that no graphics library writes
+  (`canEncode()`, now part of the imager contract) publishes unprocessed; a filter that
+  overrides `filterImage()` itself, implementing neither `filterGdImage()` nor
+  `filterImagickImage()`, was declared a filter of GD, which converted the image for it and
+  skipped it where GD is missing; an invalid (false) publish file path was recomputed on every
+  read with `CachePublishFilePath`; and a `TXmlElement` parsed by `TImagerFilterFactory` under
+  a second name prefix took the filter names of the first.
+- The test suite errored without the Imagick extension, which is only suggested, and the
+  bootstrap now says how to install the framework's tests when the package does not carry them.
 - Misspelled and outdated namespaces in the documentation (`\Prade\`, `Prado\Web\Asset\`).
 
 [Unreleased]: https://github.com/belisoful/prado-publishing/commits/main

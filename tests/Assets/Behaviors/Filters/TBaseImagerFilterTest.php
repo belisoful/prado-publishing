@@ -63,7 +63,7 @@ class TBaseImagerFilterTest extends PublishingTestCase
 		self::assertSame(TImageGraphicsMode::GD, (new TBoxBlurImagerFilter())->getGraphicsMode(), 'A filter of GD calls works in GD.');
 		self::assertSame(TImageGraphicsMode::Imagick, (new TImagickImagerFilter())->getGraphicsMode(), 'A filter of Imagick calls works in Imagick.');
 		self::assertNull((new TDualImagerFilter())->getGraphicsMode(), 'A filter of both works in either.');
-		self::assertSame(TImageGraphicsMode::GD, (new TRecordingImagerFilter())->getGraphicsMode(), 'A filter that implements neither defaults to GD.');
+		self::assertNull((new TRecordingImagerFilter())->getGraphicsMode(), 'A filter that implements neither, overriding filterImage itself, works in either.');
 	}
 
 	public function testFilterImageDispatchesByTheLibraryOfTheImage(): void
@@ -162,6 +162,9 @@ class TBaseImagerFilterTest extends PublishingTestCase
 
 	public function testConvolveImagickImagePassesTheKernelTheExtensionTakes(): void
 	{
+		if (!TImageGraphics::hasImagick()) {
+			self::markTestSkipped('Imagick is not installed.');
+		}
 		$matrix = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
 		// Imagick 3.8 and later take an ImagickKernel.
 		$recorder = new TConvolveRecorder();
@@ -177,6 +180,9 @@ class TBaseImagerFilterTest extends PublishingTestCase
 
 	public function testUsesImagickKernelFollowsTheExtension(): void
 	{
+		if (!TImageGraphics::hasImagick()) {
+			self::markTestSkipped('Imagick is not installed.');
+		}
 		$expected = ((new \ReflectionMethod(\Imagick::class, 'convolveImage'))->getParameters()[0] ?? null)?->getType();
 		$expected = $expected instanceof \ReflectionNamedType && $expected->getName() === 'ImagickKernel';
 

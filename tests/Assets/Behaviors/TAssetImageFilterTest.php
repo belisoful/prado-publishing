@@ -683,6 +683,21 @@ class TAssetImageFilterTest extends PublishingTestCase
 		self::assertFileDoesNotExist($file);
 	}
 
+	public function testSaveImageConvertsAnImagickImage(): void
+	{
+		if (!TImageGraphics::hasImagick()) {
+			self::markTestSkipped('Imagick is not installed.');
+		}
+		$filter = new TAssetImageFilter();
+		$image = TAssetImageFilter::convertImage(static::createImage(8, 4), TImageGraphicsMode::Imagick);
+		self::assertInstanceOf(\Imagick::class, $image);
+
+		// The GD encoders of a format without a prado-image container take a GD image.
+		self::assertTrue($filter->saveImage($image, IMAGETYPE_BMP, 0, $file = "$this->tempDir/imagick.bmp"));
+
+		self::assertSame([8, 4, IMAGETYPE_BMP], array_slice(getimagesize($file), 0, 3), 'The Imagick image is saved as a BMP.');
+	}
+
 	// ---------------------------------------------------------------------------
 	// Static helpers.
 	// ---------------------------------------------------------------------------

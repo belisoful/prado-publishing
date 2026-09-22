@@ -13,6 +13,7 @@ namespace Prado\Web\Tests\Assets\Behaviors;
 use Prado\Caching\TFileCacheDependency;
 use Prado\Exceptions\TConfigurationException;
 use Prado\Exceptions\TInvalidDataValueException;
+use Prado\Exceptions\TIOException;
 use Prado\IO\Image\Meta\TIPTC;
 use Prado\IO\Image\TImageGraphics;
 use Prado\IO\Image\TImageGraphicsMode;
@@ -35,11 +36,13 @@ use Prado\Web\Assets\TImageAsset;
 use Prado\Web\Tests\Fixtures\TArrayCache;
 use Prado\Web\Tests\Fixtures\TFaultyImageMetaData;
 use Prado\Web\Tests\Fixtures\TFixedOrientationMetaData;
+use Prado\Web\Tests\Fixtures\TGdImagerFilter;
 use Prado\Web\Tests\Fixtures\TGeneratedAsset;
 use Prado\Web\Tests\Fixtures\TImagickImagerFilter;
 use Prado\Web\Tests\Fixtures\TNoInterchangeImageFilter;
 use Prado\Web\Tests\Fixtures\TRecordingImagerFilter;
 use Prado\Web\Tests\Fixtures\TSimpleImageParameter;
+use Prado\Web\Tests\Fixtures\TUnwritableImageFilter;
 use Prado\Web\Tests\Fixtures\TUnavailableModeImagerFilter;
 use Prado\Web\Tests\PublishingTestCase;
 use Prado\Xml\TXmlDocument;
@@ -809,18 +812,20 @@ class TAssetImagerBaseTest extends PublishingTestCase
 			self::markTestSkipped('Imagick is not installed.');
 		}
 		$imager = new TAssetImageFilter();
-		$imager->addFilter('gd', $first = new TRecordingImagerFilter());
+		$imager->addFilter('gd', $first = new TGdImagerFilter());
 		$imager->addFilter('imagick', $imagick = new TImagickImagerFilter());
-		$imager->addFilter('gd2', $second = new TRecordingImagerFilter());
-		$first->result = $second->result = false;
+		$imager->addFilter('either', $either = new TRecordingImagerFilter());
+		$imager->addFilter('gd2', $second = new TGdImagerFilter());
+		$either->result = false;
 		$param = new TAssetEventParameter('onProcessAsset');
 		$param->setImage(static::createImage(8, 4));
 
-		self::assertTrue($imager->applyFilters($param), 'The Imagick filter changed the image.');
+		self::assertTrue($imager->applyFilters($param), 'The filters changed the image.');
 
-		self::assertSame(['GdImage'], array_map(fn ($call) => get_debug_type($call['image']), $first->calls));
+		self::assertSame(['GdImage'], $first->calls);
 		self::assertSame(['Imagick'], $imagick->calls, 'The image is converted into the library of the filter.');
-		self::assertSame(['GdImage'], array_map(fn ($call) => get_debug_type($call['image']), $second->calls), 'And back for the next filter.');
+		self::assertSame(['Imagick'], array_map(fn ($call) => get_debug_type($call['image']), $either->calls), 'A filter of either library takes the image where it is.');
+		self::assertSame(['GdImage'], $second->calls, 'And back for the filter of GD.');
 		self::assertInstanceOf(\GdImage::class, $param->getImage());
 		self::assertTrue($param->getSaveImage());
 	}
@@ -995,5 +1000,63 @@ class TAssetImagerBaseTest extends PublishingTestCase
 		$param->setSaveImage(false);
 		$imager->finalize($dst, $param);
 		self::assertSame('unchanged', file_get_contents($dst), 'An unchanged image without metadata changes is not written.');
+	}
+	public function testFinalizeThrowsWhenTheEncodedImageCannotBeWritten(): void
+	{
+		$source = $this->writeImage('unwritable.jpg');
+		$imager = new TAssetImageFilter();
+		$dst = $this->tempDir . DIRECTORY_SEPARATOR . 'a-directory';
+		mkdir($dst);
+		$param = new TAssetEventParameter('onProcessAsset', $dst);
+		$param->setImageMetaData(static::invoke($imager, 'ensureMetaData', $source));
+		$param->setImage(static::createImage());
+		$param->setOriginalImageType(IMAGETYPE_JPEG);
+		$param->setImageType(IMAGETYPE_PNG);
+
+		try {
+			$imager->finalize($dst, $param);
+			self::fail('An image that cannot be written throws.');
+		} catch (TIOException $e) {
+			self::assertStringContainsString('assetimagerbase_write_failed', $e->getMessage());
+		}
+	}
+
+	public function testFinalizeThrowsWhenTheImageCannotBeEncoded(): void
+	{
+		$source = $this->writeImage('unencodable.jpg');
+		$imager = new TUnwritableImageFilter();
+		$imager->failEncode = true;
+		$dst = $this->writeSource('unencodable.png', 'unchanged');
+		$param = new TAssetEventParameter('onProcessAsset', $dst);
+		$param->setImageMetaData(static::invoke($imager, 'ensureMetaData', $source));
+		$param->setImage(static::createImage());
+		$param->setOriginalImageType(IMAGETYPE_JPEG);
+		$param->setImageType(IMAGETYPE_PNG);
+
+		try {
+			$imager->finalize($dst, $param);
+			self::fail('An image that cannot be encoded throws.');
+		} catch (TIOException $e) {
+			self::assertStringContainsString('assetimagerbase_encode_failed', $e->getMessage());
+		}
+		self::assertSame('unchanged', file_get_contents($dst), 'The unfinished file is left to the manager to remove.');
+	}
+
+	public function testFinalizeThrowsWhenTheImageWithoutMetaDataCannotBeSaved(): void
+	{
+		$imager = new TUnwritableImageFilter();
+		$imager->failSave = true;
+		$dst = $this->writeSource('unsavable.bmp', 'unchanged');
+		$param = new TAssetEventParameter('onProcessAsset', $dst);
+		$param->setImage(static::createImage());
+		$param->setOriginalImageType(IMAGETYPE_JPEG);
+		$param->setImageType(IMAGETYPE_BMP);
+
+		try {
+			$imager->finalize($dst, $param);
+			self::fail('An image type without metadata that cannot be saved throws.');
+		} catch (TIOException $e) {
+			self::assertStringContainsString('assetimagerbase_write_failed', $e->getMessage());
+		}
 	}
 }

@@ -21,6 +21,7 @@ use Prado\Web\IPublishable;
 use Prado\Web\IPublishedCapture;
 use Prado\Web\TAssetManager;
 use Prado\Web\Tests\Fixtures\TAssetPathFilterBehavior;
+use Prado\Web\Tests\Fixtures\TCopyingPublishingManager;
 use Prado\Web\Tests\Fixtures\TGeneratedAsset;
 use Prado\Web\Tests\Fixtures\TProbeAsset;
 use Prado\Web\Tests\Fixtures\TRecordingAssetFinalizer;
@@ -984,11 +985,46 @@ class TAssetTest extends PublishingTestCase
 		$this->newManager();
 		$src = $this->writeTree();
 		$dst = $this->tempDir . DIRECTORY_SEPARATOR . 'copied';
+		$asset = new TProbeAsset();
+		self::assertNull($asset->getAssetManager(), 'An asset published on its own has no asset manager.');
 
-		(new TProbeAsset())->probeCopyDirectory($src, $dst);
+		$asset->probeCopyDirectory($src, $dst);
 
 		self::assertSame('alpha', file_get_contents($dst . '/a.txt'));
 		self::assertSame('beta', file_get_contents($dst . '/sub/b.txt'));
+	}
+
+	public function testCopyDirectoryUsesTheAssetManagerOfTheAsset(): void
+	{
+		// The manager of the asset is not the application's, which the second one becomes.
+		$manager = $this->newManager([], TCopyingPublishingManager::class);
+		$this->newManager();
+		$src = $this->writeTree();
+		$dst = $this->tempDir . DIRECTORY_SEPARATOR . 'copied-by-its-manager';
+		$asset = new TProbeAsset();
+		$asset->setAssetManager($manager);
+		self::assertSame($manager, $asset->getAssetManager());
+
+		$asset->probeCopyDirectory($src, $dst);
+
+		self::assertSame([$src, $dst], $manager->copied[0], 'The directory is copied with the asset manager of the asset.');
+		self::assertCount(2, $manager->copied, 'Its sub-directory as well.');
+		self::assertSame('alpha', file_get_contents($dst . '/a.txt'));
+
+		$asset->setAssetManager(null);
+		$asset->probeCopyDirectory($src, $dst = $this->tempDir . DIRECTORY_SEPARATOR . 'copied-by-the-application');
+		self::assertCount(2, $manager->copied, 'Without one, the application asset manager copies it.');
+		self::assertSame('alpha', file_get_contents($dst . '/a.txt'));
+	}
+
+	public function testThePublishingManagerIsTheAssetManagerOfTheAssetsItPublishes(): void
+	{
+		$manager = $this->newManager();
+		$asset = new TFileAsset($this->writeSource('managed.txt', 'managed'));
+
+		$manager->publish($asset);
+
+		self::assertSame($manager, $asset->getAssetManager(), 'The manager publishing an asset is its asset manager.');
 	}
 
 	public function testBaseDirectoryDesignationIsATrailingSeparator(): void

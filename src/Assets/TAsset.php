@@ -15,6 +15,7 @@ use Prado\Prado;
 use Prado\TComponent;
 use Prado\TPropertyValue;
 use Prado\Web\IPublishedCapture;
+use Prado\Web\TAssetManager;
 
 /**
  * TAsset class
@@ -98,8 +99,14 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 	/** @var bool whether the publish file path is computed once and reused. */
 	private bool $_cachePublishFilePath = false;
 
-	/** @var null|false|string the cached publish file path, false for not computed. */
+	/** @var null|false|string the cached publish file path; see $_publishfileCached. */
 	private $_publishfile = false;
+
+	/** @var bool whether $_publishfile is computed, as the publish file path can be false. */
+	private bool $_publishfileCached = false;
+
+	/** @var ?TAssetManager the asset manager publishing the asset, null for the application's. */
+	private ?TAssetManager $_assetManager = null;
 
 	/** @var ?string the published destination file path of a published asset */
 	private $_publishedPath;
@@ -295,7 +302,7 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 	 */
 	public function getAssetPublishFilePath()
 	{
-		if ($this->_cachePublishFilePath && $this->_publishfile !== false) {
+		if ($this->_publishfileCached) {
 			return $this->_publishfile;
 		}
 		$path = $this->getAssetFilePath();
@@ -305,6 +312,7 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 		$path = $this->dyAlterAssetFilePath($path);
 		if ($this->_cachePublishFilePath) {
 			$this->_publishfile = $path;
+			$this->_publishfileCached = true;
 		}
 		return $path;
 	}
@@ -332,6 +340,7 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 	{
 		$this->_cachePublishFilePath = TPropertyValue::ensureBoolean($value);
 		$this->_publishfile = false;
+		$this->_publishfileCached = false;
 	}
 
 	/**
@@ -371,6 +380,7 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 		$this->_originalfile = false;
 		$this->_vfile = false;
 		$this->_publishfile = false;
+		$this->_publishfileCached = false;
 		$this->dyResetFilePathCache();
 	}
 
@@ -477,16 +487,18 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 	}
 
 	/**
-	 * Copies a directory from the source to the destination with the application's
-	 * asset manager.  A {@see \Prado\Web\TPublishingManager} publishes each file as an
-	 * asset; a plain {@see \Prado\Web\TAssetManager} copies the files.
+	 * Copies a directory from the source to the destination with the
+	 * {@see getAssetManager AssetManager} publishing the asset, or with the application's
+	 * asset manager when the asset publishes on its own.  A
+	 * {@see \Prado\Web\TPublishingManager} publishes each file as an asset; a plain
+	 * {@see \Prado\Web\TAssetManager} copies the files.
 	 *
 	 * @param string $src the source directory to copy.
 	 * @param string $dst the destination directory.
 	 */
 	protected function copyDirectory(string $src, string $dst): void
 	{
-		Prado::getApplication()->getAssetManager()->copyDirectory($src, $dst);
+		($this->_assetManager ?? Prado::getApplication()->getAssetManager())->copyDirectory($src, $dst);
 	}
 
 	/**
@@ -564,6 +576,29 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 	{
 		$this->raiseEvent('onProcessAsset', $this, $param = new TAssetEventParameter('onProcessAsset', $filepath, $this));
 		$param->finalize();
+	}
+
+	/**
+	 * The asset manager publishing the asset, which {@see copyDirectory} copies a
+	 * directory asset with.  {@see \Prado\Web\TPublishingManager::routeAsset} sets it on
+	 * the assets it publishes, so an asset of a manager other than the application's
+	 * publishes through its own manager.
+	 *
+	 * @return ?TAssetManager the asset manager publishing the asset, or null for an asset
+	 *   published on its own, which takes the application's asset manager.
+	 */
+	public function getAssetManager(): ?TAssetManager
+	{
+		return $this->_assetManager;
+	}
+
+	/**
+	 * @param ?TAssetManager $value the asset manager publishing the asset, or null for
+	 *   the application's.
+	 */
+	public function setAssetManager(?TAssetManager $value): void
+	{
+		$this->_assetManager = $value;
 	}
 
 	/**
