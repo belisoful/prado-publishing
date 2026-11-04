@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors\Filters;
@@ -214,7 +214,7 @@ class TAutoCropImagerFilterTest extends PublishingTestCase
 		$filter->setCropMode('Transparent');
 
 		$opaque = static::boxImage();
-		self::assertNull($filter->filterImage($opaque), 'An image without a transparent color is not cropped.');
+		self::assertFalse($filter->filterImage($opaque), 'An opaque image without a transparent color has nothing to crop.');
 		self::assertSame(200, imagesx($opaque));
 
 		$image = static::boxImage(100, 50, 0x0000FF);
@@ -233,8 +233,54 @@ class TAutoCropImagerFilterTest extends PublishingTestCase
 		self::assertFalse(TAutoCropImagerFilter::imageCropAuto($uniform, IMG_CROP_THRESHOLD, 0.5, 0xFF0000), 'Cropping the whole image fails.');
 		self::assertSame(20, imagesx($uniform));
 
-		$image = static::boxImage();
-		self::assertTrue(TAutoCropImagerFilter::imageCropAuto($image, IMG_CROP_WHITE, 0.0));
+		$image = $original = static::boxImage();
+		self::assertFalse(TAutoCropImagerFilter::imageCropAuto($image, IMG_CROP_WHITE, 0.0), 'A crop of nothing is no change.');
+		self::assertSame($original, $image, 'The image is not replaced.');
+	}
+
+	/**
+	 * @return \GdImage a 20x20 transparent image with an opaque 10x10 red box at (5, 5).
+	 */
+	protected static function alphaImage(): \GdImage
+	{
+		$image = imagecreatetruecolor(20, 20);
+		imagealphablending($image, false);
+		imagesavealpha($image, true);
+		imagefilledrectangle($image, 0, 0, 19, 19, 0x7FFFFFFF);
+		imagefilledrectangle($image, 5, 5, 14, 14, 0xFF0000);
+		imagesetpixel($image, 5, 5, 0x40FF0000);
+		return $image;
+	}
+
+	public function testTransparentModesCropTheAlphaChannel(): void
+	{
+		// Regression: an image of an alpha channel and no transparent color was never cropped.
+		foreach (['Default', 'Transparent'] as $mode) {
+			$filter = new TAutoCropImagerFilter();
+			$filter->setCropMode($mode);
+			$image = static::alphaImage();
+
+			self::assertTrue($filter->filterImage($image), "$mode crops the transparent pixels.");
+			self::assertSame([10, 10], [imagesx($image), imagesy($image)], $mode);
+			self::assertSame(0x40FF0000, imagecolorat($image, 0, 0), "$mode keeps a partly transparent pixel.");
+			self::assertSame(0xFF0000, imagecolorat($image, 9, 9));
+			self::assertSame(-1, imagecolortransparent($image), "$mode adds no transparent color.");
+		}
+	}
+
+	public function testACropOfTheSameSizeIsNoChange(): void
+	{
+		// Regression: a crop that left the size unchanged reported a change.
+		$filter = new TAutoCropImagerFilter();
+		$filter->setCropMode('Black');
+		$image = $original = static::createImage(20, 20, 0x808080, 0x808080);
+		self::assertFalse($filter->filterImage($image));
+		self::assertSame($original, $image, 'The image is not replaced.');
+
+		$param = new TAssetEventParameter('onProcessAsset');
+		$param->setImage(static::createImage(20, 20, 0x808080, 0x808080));
+		self::assertFalse(static::applyFilter($filter, $param));
+		self::assertFalse($param->getSaveImage(), 'An unchanged image is not saved.');
 	}
 
 	public function testHandlerFlagsTheSave(): void

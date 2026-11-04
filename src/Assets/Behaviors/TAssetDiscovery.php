@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -22,14 +22,16 @@ use Prado\Util\TBehavior;
  * its {@see \Prado\Web\TPublishingManager::onDiscoverClass onDiscoverClass} event,
  * rather than attaching to the TAsset class (as most Asset Behaviors do).
  * A TTemplate can publish alternate assets by reference using this class.
- * Any file path that matches MatchFiles will optionally be replaced with
- * {@see getMatchReplacement MatchReplacement} and then instanced
+ * Any file path that matches MatchFiles will optionally have its first match
+ * replaced with {@see getMatchReplacement MatchReplacement} and then be instanced
  * with the specified {@see getRoutedClass RoutedClass} rather than the
  * {@see \Prado\Web\TPublishingManager::getDefaultAssetClass DefaultAssetClass}.
  *
  * eg. If you have a TDbAsset for publishing files from your database,
  * the files can be referenced as a file to publish in a TTemplate
  * without special classes.
+ *
+ * Anchor MatchFiles, with "^" or "$", so it matches the intended part of the path.
  *
  * ```xml
  * <behavior name="dbPublisher" Class="Prado\Web\Assets\Behaviors\TAssetDiscovery"
@@ -132,7 +134,8 @@ class TAssetDiscovery extends TBehavior implements IAssetReplacement
 
 	/**
 	 * Any file paths that match the regex in {@see getMatchFiles MatchFiles}
-	 * are optionally replaced with {@see getMatchReplacement MatchReplacement} and the
+	 * optionally have the first match replaced with {@see getMatchReplacement
+	 * MatchReplacement} and the
 	 * parameter's {@see \Prado\Web\Assets\TAssetDiscoverClassEventParameter::setClass
 	 * Class} is set to the {@see getRoutedClass RoutedClass}.
 	 *
@@ -149,7 +152,7 @@ class TAssetDiscovery extends TBehavior implements IAssetReplacement
 				throw new TConfigurationException('assetdiscovery_requires_class');
 			}
 			if ($replacement = $this->getMatchReplacement()) {
-				$param->setFilePath(preg_replace($match, $replacement, $filePath));
+				$param->setFilePath(preg_replace($match, $replacement, $filePath, 1));
 			}
 			$param->setClass($class);
 		}

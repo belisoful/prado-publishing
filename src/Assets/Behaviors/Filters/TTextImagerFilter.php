@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors\Filters;
@@ -32,7 +32,8 @@ use Prado\Web\Assets\TAssetEventParameter;
  * path to your GDFont ".gdf" file.  The GD string render lacks font
  * size, render angle, line spacing, and alignment. {@see getFontNamespace
  * FontNamespace} can be used to specify the directory of your .gdf font file,
- * in which case, you can provide just the GDFont name.
+ * in which case, you can provide just the GDFont name.  A font in the FontNamespace,
+ * GD or TrueType, must resolve to a file inside the directory of the namespace.
  *
  * {@see getTextX TextX} and {@see getTextY TextY} are used to place
  * the text.  These can be pixels from the left top. When negative numbers
@@ -46,6 +47,9 @@ use Prado\Web\Assets\TAssetEventParameter;
  * "Center", "Bottom", and "" (blank).  When blank, the alignment is
  * automatic by the sign of TextX and TextY: positive values are Left and
  * Top aligned, and negative values are Right and Bottom aligned.
+ *
+ * The em square of the {@see getTTFontSize TTFontSize}, in pixels at the 96 dots per
+ * inch of GD, is limited to {@see getMaximumOutputPixels MaximumOutputPixels}.
  *
  * This filter is written in GD, whose bitmap fonts (`.gdf`) Imagick cannot read. The imager
  * converts an image of another graphics library into GD for it, and skips the filter where GD
@@ -320,7 +324,8 @@ class TTextImagerFilter extends TBaseImagerFilter
 	 * {@see getTTLineSpacing TTLineSpacing}.
 	 * When the {@see getFontNamespace FontNamespace} is used, this only
 	 * needs to be the name of the font without the ".ttf" because the extension
-	 * is automatically added.
+	 * is automatically added.  The font is then given to GD by its full path in the
+	 * namespace, and a font that is not in the namespace is not rendered.
 	 *
 	 * @return null|string The TrueType font name or a path
 	 * (optionally relative to {@see getFontNamespace FontNamespace}) to the ".ttf" file.
@@ -456,13 +461,15 @@ class TTextImagerFilter extends TBaseImagerFilter
 	 *
 	 * @param object &$image The image being filtered.
 	 * @param ?TAssetEventParameter $param the publishing context.
-	 * @throws TConfigurationException when the FontNamespace does not resolve or
-	 *   the GD font cannot be loaded.
+	 * @throws TConfigurationException when the FontNamespace does not resolve, a font is
+	 *   outside of it, or the GD font cannot be loaded.
+	 * @throws \Prado\Exceptions\TInvalidDataValueException when the em square of the
+	 *   TTFontSize has more pixels than MaximumOutputPixels.
 	 * @return ?bool Was the image changed; null when there is no text.
 	 */
 	protected function filterGdImage(&$image, ?TAssetEventParameter $param = null): ?bool
 	{
-		if (!$image || !($text = $this->getText())) {
+		if (!$image || ($text = $this->getText()) === '') {
 			return null;
 		}
 
@@ -477,15 +484,13 @@ class TTextImagerFilter extends TBaseImagerFilter
 		if ($ttFont = $this->getTTFont()) { // Render a FreeType2 string
 			$fontSize = $this->getTTFontSize();
 			$angle = $this->getTTAngle();
+			// GD sizes a FreeType font in points at 96 dots per inch; a glyph fills up to the em square.
+			$emPixels = ceil($fontSize * 96.0 / 72.0);
+			$this->ensureOutputSize($emPixels, $emPixels);
 
-			$fontNamespace = $this->getFontNamespace();
-			if ($fontNamespace) {
-				$fontPath = Prado::getPathOfNamespace($fontNamespace);
-				if ($fontPath !== null && ($realFontPath = realpath($fontPath))) {
-					putenv('GDFONTPATH=' . $realFontPath);
-				} else {
-					throw new TConfigurationException('textimagerfilter_bad_font_namespace', $fontPath ?? $fontNamespace);
-				}
+			// The font is given to GD by its full path, so GDFONTPATH and the process environment are left alone.
+			if ($this->getFontNamespace() && ($ttFont = $this->resolveFontFile($ttFont, ['', '.ttf'])) === null) {
+				return false; // The font is not in the namespace, so the text is not rendered.
 			}
 
 			$option = [];
@@ -520,8 +525,7 @@ class TTextImagerFilter extends TBaseImagerFilter
 			$gdfont = null;
 			$gdf = $this->getGDFont();
 			if (!is_numeric($gdf) && ($fns = $this->getFontNamespace())) {
-				$fontPath = Prado::getPathOfNamespace($fns);
-				$gdf = $fontPath . DIRECTORY_SEPARATOR . $gdf;
+				$gdf = $this->resolveFontFile($gdf, ['']) ?? throw new TConfigurationException('textimagerfilter_bad_gd_font', $gdf);
 				$verify = $this->getVerifyGDFont();
 				$app = Prado::getApplication();
 				$v = null;
@@ -545,6 +549,34 @@ class TTextImagerFilter extends TBaseImagerFilter
 			}
 		}
 		return $rendered;
+	}
+
+	/**
+	 * Resolves a font file in the {@see getFontNamespace FontNamespace}.  The real path of
+	 * the file must be inside the directory of the namespace, so a font name cannot leave it.
+	 * @param string $font the font file name in the namespace.
+	 * @param string[] $extensions the extensions tried in turn, '' for the name as it is.
+	 * @throws TConfigurationException when the namespace is not a directory, or the font
+	 *   file is outside of it.
+	 * @return ?string the real path of the font file, or null when there is none.
+	 */
+	protected function resolveFontFile(string $font, array $extensions): ?string
+	{
+		$fontNamespace = $this->getFontNamespace();
+		$fontPath = Prado::getPathOfNamespace($fontNamespace);
+		if ($fontPath === null || !($directory = realpath($fontPath)) || !is_dir($directory)) {
+			throw new TConfigurationException('textimagerfilter_bad_font_namespace', $fontPath ?? $fontNamespace);
+		}
+		$prefix = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+		foreach ($extensions as $extension) {
+			if (($file = realpath($prefix . $font . $extension)) !== false && is_file($file)) {
+				if (!str_starts_with($file, $prefix)) {
+					throw new TConfigurationException('textimagerfilter_font_outside_namespace', $font, $fontNamespace);
+				}
+				return $file;
+			}
+		}
+		return null;
 	}
 
 	/**

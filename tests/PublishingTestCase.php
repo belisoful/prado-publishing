@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests;
@@ -77,6 +77,10 @@ abstract class PublishingTestCase extends TestCase
 
 	protected function tearDown(): void
 	{
+		// Every manager is a TApplicationComponent, so it listens to global events through a
+		// weak reference. Collecting the managers of the test here keeps the cycle collector from
+		// freeing one while a class behavior detach raises fxDetachClassBehavior.
+		gc_collect_cycles();
 		foreach (array_reverse($this->_classBehaviors) as [$name, $class]) {
 			TComponent::detachClassBehavior($name, $class);
 		}

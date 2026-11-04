@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors\Filters;
@@ -206,11 +206,16 @@ class TAutoCropImagerFilter extends TBaseImagerFilter
 	 * This is a more advanced version of PHP GD's imageCropAuto allowing
 	 * for threshold on Sides, Black, and White besides Threshold.
 	 *
+	 * The Default and Transparent modes crop the transparent color of an image that has
+	 * one, and otherwise crop the fully transparent pixels of the alpha channel.  A crop
+	 * that leaves the size of the image unchanged does not change the image.
+	 *
 	 * @param object &$image The image to crop, replaced by the cropped image on success.
 	 * @param int $mode The mode to autoCrop
 	 * @param ?float $threshold The threshold for Sides, Black, White, and Threshold.
 	 * @param int $color The Color of the Threshold crop
-	 * @return ?bool Successful or not, null is no action, false is fail, true is success.
+	 * @return ?bool Successful or not, null is no action, false is fail or nothing to crop,
+	 *   true is success.
 	 * @see https://www.php.net/manual/en/function.imagecropauto.php
 	 */
 	public static function imageCropAuto(&$image, int $mode = IMG_CROP_DEFAULT, ?float $threshold = null, int $color = -1): ?bool
@@ -220,9 +225,9 @@ class TAutoCropImagerFilter extends TBaseImagerFilter
 		}
 		if ($mode === IMG_CROP_THRESHOLD) {
 			$threshold ??= 0.5;
-		} elseif ($mode === IMG_CROP_TRANSPARENT) {
+		} elseif ($mode === IMG_CROP_DEFAULT || $mode === IMG_CROP_TRANSPARENT) {
 			if (imagecolortransparent($image) === -1) {
-				return null;
+				return self::imageCropAlpha($image);
 			}
 		} elseif ($mode === IMG_CROP_BLACK) {
 			$mode = IMG_CROP_THRESHOLD;
@@ -256,10 +261,45 @@ class TAutoCropImagerFilter extends TBaseImagerFilter
 			return null;
 		}
 		if ($croppedImage = imagecropauto($image, $mode, $threshold ?? 0.5, $color)) {
+			if (imagesx($croppedImage) === imagesx($image) && imagesy($croppedImage) === imagesy($image)) {
+				return false;
+			}
 			self::transferImageProperties($croppedImage, $image);
 			$image = $croppedImage;
 			return true;
 		}
 		return false;
+	}
+
+	/**
+	 * Crops the fully transparent pixels from the edges of an image without a transparent
+	 * color.  The image is drawn, blending, over a canvas of transparent black, so every
+	 * fully transparent pixel becomes transparent black and every other pixel keeps its
+	 * color, and the canvas is cropped of its transparent black.
+	 *
+	 * @param object &$image The true color image to crop, replaced by the cropped image.
+	 * @return bool Was the image cropped; false when there is nothing to crop.
+	 */
+	protected static function imageCropAlpha(&$image): bool
+	{
+		$sx = imagesx($image);
+		$sy = imagesy($image);
+		if (!($canvas = imagecreatetruecolor($sx, $sy))) {
+			return false;
+		}
+		imagealphablending($canvas, false);
+		imagefilledrectangle($canvas, 0, 0, $sx - 1, $sy - 1, 0x7F000000);
+		imagealphablending($canvas, true);
+		imagecopy($canvas, $image, 0, 0, 0, 0, $sx, $sy);
+		imagecolortransparent($canvas, 0x7F000000);
+		$croppedImage = imagecropauto($canvas, IMG_CROP_TRANSPARENT);
+		if (!$croppedImage || (imagesx($croppedImage) === $sx && imagesy($croppedImage) === $sy)) {
+			return false;
+		}
+		imagecolortransparent($croppedImage, -1);
+		imagealphablending($croppedImage, false);
+		imagesavealpha($croppedImage, true);
+		$image = $croppedImage;
+		return true;
 	}
 }

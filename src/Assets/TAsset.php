@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets;
@@ -83,6 +83,9 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 {
 	/** @var ?string the path set before any behaviors modify the file path */
 	private $_firstfilepath;
+
+	/** @var ?string the path the asset was reached by, before symbolic links are resolved. */
+	private $_givenFilePath;
 
 	/** @var ?string the virtual file path which is replaces OriginalFile when computing/filtering
 	 * into the AssetFilePath.  This acts like an alias or reference to the original file. */
@@ -368,6 +371,29 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 	}
 
 	/**
+	 * The path the asset was reached by, before symbolic links are resolved: the path set
+	 * by {@see setAssetGivenFilePath}, e.g. the directory entry of a published directory or
+	 * the path given to {@see \Prado\Web\TPublishingManager::publish}, or else the
+	 * absolute path set by {@see setAssetFilePath}.  {@see \Prado\Web\Assets\Behaviors\TAssetBlocker}
+	 * tests it beside the resolved path.
+	 * @return ?string the unresolved path of the asset, null without a file path.
+	 */
+	public function getAssetGivenFilePath(): ?string
+	{
+		return $this->_givenFilePath ?? $this->_firstfilepath;
+	}
+
+	/**
+	 * @param ?string $value the path the asset was reached by, before symbolic links are
+	 *   resolved; null for the path set by {@see setAssetFilePath}.
+	 */
+	public function setAssetGivenFilePath(?string $value): void
+	{
+		$this->_givenFilePath = ($value === null || $value === '') ? null : self::virtualpath($value);
+		$this->resetFilePathCache();
+	}
+
+	/**
 	 * Resets the AssetFilePath and OriginalFile so they can be
 	 * recomputed through the dynamic events.  This is mainly used by
 	 * behaviors when their changes affect the TAsset FilePaths.
@@ -533,7 +559,8 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 	 * @throws \Prado\Exceptions\TInvalidDataTypeException when a finalizer is not an
 	 *   instance of IAssetFinalizer, from onProcessAsset.
 	 * @return ?bool whether the asset was published; false when it is cancelled or not
-	 *   written, or the value a dyWriteAsset handler returns.
+	 *   written, or the value a dyWriteAsset handler returns.  A file that is not written
+	 *   is removed from $dst, so a partial write is not left behind.
 	 * @method mixed dyWriteAsset($returnValue, $dst) allows behaviors to take over
 	 *   writing the asset.  Returning 0 (pass-through) proceeds with writeAsset; any other
 	 *   value is returned from publish.
@@ -558,6 +585,9 @@ abstract class TAsset extends TComponent implements IAsset, IPublishedCapture
 			return true;
 		}
 		if (!$this->writeAsset($dst)) {
+			if (is_file($dst) || is_link($dst)) {
+				@unlink($dst);	// a partially written file must not look published
+			}
 			return false;
 		}
 		$this->onProcessAsset($dst);

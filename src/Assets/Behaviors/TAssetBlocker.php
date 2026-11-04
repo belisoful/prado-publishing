@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -20,12 +20,24 @@ use Prado\Util\TBehavior;
  * This blocks publishing of certain {@see \Prado\Web\Assets\TAsset}s.
  * When the file path matches the {@see getBlockedFiles BlockedFiles}
  * regular expression, then the file is blocked from publishing.
- * By default, BlockedFiles are hidden files and files in hidden directories (any
- * path segment starting with a period), '.php' files, cron and cache files, and all
- * config.xml and application.xml files.  The whole absolute path is tested, so assets
- * under a hidden directory anywhere above them (e.g. "~/.composer/...") are blocked by
- * the default; set BlockedFiles for such an installation.  The path is tested both as
- * given and resolved, so a symbolic link to a blocked file is blocked too.
+ *
+ * The whole absolute path is tested, so assets under a hidden directory anywhere above
+ * them (e.g. "~/.composer/...") are blocked by the default; set BlockedFiles for such an
+ * installation.  The path is tested both as given and resolved: the resolved path and the
+ * {@see \Prado\Web\Assets\TAsset::getAssetGivenFilePath AssetGivenFilePath} (the path
+ * as given, or the directory entry, before symbolic links are resolved).  A file is
+ * blocked when either path matches, so a symbolic link to a blocked file and a hidden
+ * name that links to a public file are both blocked.  {@see isBlockedFile} tests a
+ * single path, e.g. an entry of a tar archive.
+ *
+ * By default, BlockedFiles blocks:
+ * - hidden files and files in hidden directories (any path segment starting with a period);
+ * - PHP and alternate PHP names: ".php", ".php5", ".php7", ".phtml", ".phar", and ".inc";
+ * - backup and editor files of any name: a trailing "~", ".bak", ".orig", ".old", ".swp",
+ *   ".swo", and ".save", e.g. "index.php~" and "application.xml.bak";
+ * - database files: ".sqlite", ".sqlite3", and ".db";
+ * - "cron.jobs" and ".cache" files;
+ * - "protected/application.xml", every "config.xml", and the XML files under "protected/data".
  *
  * Attach this class to {@see \Prado\Web\Assets\TAsset} class with the
  * following {@see \Prado\Util\TBehaviorsModule} configuration, for example:
@@ -73,7 +85,8 @@ class TAssetBlocker extends TBehavior
 	public function __construct()
 	{
 		$sep = (DIRECTORY_SEPARATOR === '/') ? '\\/' : '\\\\';
-		$this->_blockedFiles = '/(' . $sep . '\.|\.php$|cron\.jobs$|\.cache$|protected.application\.xml$|config\.xml$)/i';
+		$this->_blockedFiles = '/(' . $sep . '\.|\.(?:php\d*|phtml|phar|inc)$|(?:~|\.(?:bak|orig|old|swp|swo|save))$|\.(?:sqlite3?|db)$'
+			. '|cron\.jobs$|\.cache$|protected' . $sep . 'application\.xml$|protected' . $sep . 'data' . $sep . '.*\.xml$|config\.xml$)/i';
 		parent::__construct();
 	}
 
@@ -158,15 +171,28 @@ class TAssetBlocker extends TBehavior
 	{
 		$filepath = $callchain->dySetAssetFilePathPre($filepath);
 		if ($filepath && !empty($path = $this->getNoAssetPath()) && !empty($nofile = $this->getNoAssetFile()) &&
-			preg_match($this->getBlockedFiles(), $filepath)) {
+			$this->isBlockedFile($filepath)) {
 			$filepath = Prado::getPathOfNamespace($path) . DIRECTORY_SEPARATOR . $nofile;
 		}
 		return $filepath;
 	}
 
 	/**
+	 * Whether a path matches the {@see getBlockedFiles BlockedFiles}.
+	 * @param string $path the file path to test.
+	 * @return bool whether the path is blocked.
+	 */
+	public function isBlockedFile(string $path): bool
+	{
+		return $path !== '' && preg_match($this->getBlockedFiles(), $path) === 1;
+	}
+
+	/**
 	 * This cancels the publishing of the asset by setting the AssetFilePath
-	 * to null (after file validation) so the asset is blocked from publish.
+	 * to the NoAsset asset, or to null without one (after file validation), so the
+	 * asset is blocked from publish.  The validated (resolved) path and the owner's
+	 * {@see \Prado\Web\Assets\TAsset::getAssetGivenFilePath AssetGivenFilePath} are
+	 * tested; either matching blocks the asset.
 	 *
 	 * @param string $filepath
 	 * @param \Prado\Util\TCallChain $callchain
@@ -174,7 +200,7 @@ class TAssetBlocker extends TBehavior
 	 */
 	public function dySetAssetFilePathPost($filepath, $callchain)
 	{
-		if (is_string($filepath) && $filepath !== '' && preg_match($this->getBlockedFiles(), $filepath)) {
+		if (is_string($filepath) && $filepath !== '' && ($this->isBlockedFile($filepath) || $this->isBlockedGivenPath())) {
 			$placeholder = null;
 			if (!empty($path = $this->getNoAssetPath()) && !empty($nofile = $this->getNoAssetFile())) {
 				$placeholder = realpath(Prado::getPathOfNamespace($path) . DIRECTORY_SEPARATOR . $nofile) ?: null;
@@ -185,5 +211,18 @@ class TAssetBlocker extends TBehavior
 			}
 		}
 		return $callchain->dySetAssetFilePathPost($filepath);
+	}
+
+	/**
+	 * @return bool whether the owner's path as given, before symbolic links are resolved,
+	 *   is blocked.
+	 */
+	protected function isBlockedGivenPath(): bool
+	{
+		$owner = $this->getOwner();
+		if (!method_exists($owner, 'getAssetGivenFilePath') || !is_string($given = $owner->getAssetGivenFilePath())) {
+			return false;
+		}
+		return $this->isBlockedFile(rtrim($given, '/\\'));
 	}
 }

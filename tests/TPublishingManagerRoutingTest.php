@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests;
@@ -170,7 +170,8 @@ class TPublishingManagerRoutingTest extends PublishingTestCase
 		$url = $manager->publishTarFile($tar);
 		$dir = $this->urlToPath($url);
 
-		self::assertSame($manager->getPublishedUrl($this->srcDir . '/bundle'), $url, 'The archive publishes as its directory.');
+		self::assertNotSame($manager->getPublishedUrl($this->srcDir . '/bundle'), $url, 'The archive publishes as its own directory, not its folder.');
+		self::assertSame($manager->getPublishedUrl(new TTarAsset($tar)), $url);
 		self::assertSame(['.', '..', static::marker($tar), 'style.css', 'sub'], scandir($dir), 'The completion marker marks the extraction.');
 		self::assertSame($url, $manager->getPublished()['tar:' . $tar], 'The URL is cached by the archive, under a tar key.');
 		self::assertArrayNotHasKey($tar, $manager->getPublished(), 'The archive does not take the cache entry of its path.');
@@ -191,6 +192,23 @@ class TPublishingManagerRoutingTest extends PublishingTestCase
 
 		self::assertNotSame($firstUrl, $secondUrl, 'Archives without a checksum file do not share a cache entry.');
 		self::assertTrue(is_file($this->urlToPath($secondUrl) . '/style.css'));
+	}
+
+	public function testArchivesWithoutAChecksumInOneFolderDoNotShareADirectory(): void
+	{
+		$one = $this->writeSource('shared/one.tar', TarTestHelper::archive([TarTestHelper::entry('shared.txt', 'ONE')]));
+		$two = $this->writeSource('shared/two.tar', TarTestHelper::archive([TarTestHelper::entry('shared.txt', 'TWO')]));
+		$md5 = $this->writeSource('shared/one.md5', md5_file($one));
+		$manager = $this->newManager();
+
+		$oneUrl = $manager->publishTarFile($one);
+		$twoUrl = $manager->publishTarFile($two);
+		$checkedUrl = $manager->publishTarFile($one, $md5);
+
+		self::assertNotSame($oneUrl, $twoUrl);
+		self::assertSame('ONE', file_get_contents($this->urlToPath($oneUrl) . '/shared.txt'));
+		self::assertSame('TWO', file_get_contents($this->urlToPath($twoUrl) . '/shared.txt'));
+		self::assertSame($manager->getPublishedUrl($this->srcDir . '/shared'), $checkedUrl, 'An archive with a checksum file publishes to the folder of its checksum, as in TAssetManager.');
 	}
 
 	public function testPublishTarFileOptionsFillTheArchiveSettings(): void
@@ -365,7 +383,8 @@ class TPublishingManagerRoutingTest extends PublishingTestCase
 
 			$url = $manager->publish($asset);
 
-			self::assertSame($manager->getPublishedUrl($this->srcDir . ($withChecksum ? '/checked' : '/unchecked')), $url);
+			self::assertSame($withChecksum ? $manager->getPublishedUrl($this->srcDir . '/checked') : $manager->getPublishedUrl($asset), $url);
+			self::assertNotSame($manager->getPublishedUrl($this->srcDir . '/unchecked'), $url, 'An archive without a checksum file publishes to its own directory.');
 			self::assertCount(1, $asset->writtenTo, "The virtual archive $case is generated.");
 			self::assertTrue(is_file($this->urlToPath($url) . '/generated.txt'), "The virtual archive $case is extracted.");
 			self::assertSame([], glob($this->assetDir . '/tmp-*'), 'The temporary archive is removed.');

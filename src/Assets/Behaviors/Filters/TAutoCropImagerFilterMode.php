@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors\Filters;
@@ -16,7 +16,8 @@ namespace Prado\Web\Assets\Behaviors\Filters;
  * can be set at by setting {@see TAutoCropImagerFilter::setCropMode CropMode}.
  * In particular, the following modes are defined:
  * - Default: Same as 'Transparent'.
- * - Transparent: Crops out a transparent background.
+ * - Transparent: Crops out a transparent background: the transparent color of an image
+ *   that has one, and otherwise the fully transparent pixels of the alpha channel.
  * - Black: Crops out a black background.
  * - White: Crops out a white background.
  * - Sides: Uses the 4 corners of the image to attempt to detect the background to crop.

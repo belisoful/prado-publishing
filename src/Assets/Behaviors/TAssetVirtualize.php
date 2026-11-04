@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -48,10 +48,14 @@ use Prado\Util\TBehavior;
  *
  * MapFromVirtual has the default "${1}.${2}"; for regular expressions like
  * in the example "virtualizeThumb" below.
- * OriginalFiles has the default Linux value: '/(?<=\/)([^\/]*)\.([^\/\.]*)$/i'
- * and default Windows value: '/(?<=\\)([^\\]*)\.([^\\\.]*)$/i'
- * This is to make the MapToVirtual easy, like in the example "virtualizeThumb"
- * below.
+ * OriginalFiles has the default Linux value: '/(?<=\/)([^\/]*?)(?:\.([^\/\.]*))?$/i'
+ * and default Windows value: '/(?<=\\)([^\\]*?)(?:\.([^\\\.]*))?$/i'
+ * capturing the file name and its optional extension. This is to make the
+ * MapToVirtual easy, like in the example "virtualizeThumb" below.
+ *
+ * Only the first match of each regular expression is replaced. Anchor the
+ * expressions, with "^" or "$", so they match the intended part of the path; an
+ * unanchored folder name could otherwise match an earlier folder of the same name.
  *
  * ```xml
  * <behavior name="virtualizeThumb" Class="Prado\Web\Assets\Behaviors\TAssetVirtualize"
@@ -66,8 +70,9 @@ use Prado\Util\TBehavior;
  *   <filter type="resize" FixedWidth="80" FixedHeight="80" CropFill="true" />
  * </behavior>
  * <behavior name="virtualizeFolder" Class="Prado\Web\Assets\Behaviors\TAssetVirtualize"
- *     AttachToClass="Prado\Web\Assets\TAsset" VirtualFiles="/\/userIcons\//i"
- *     MapFromVirtual="/realpath/" OriginalFiles="/\/realpath\//i" MapToVirtual="/icons/" />
+ *     AttachToClass="Prado\Web\Assets\TAsset" VirtualFiles="/^(.*\/assets)\/userIcons\//i"
+ *     MapFromVirtual="${1}/realpath/" OriginalFiles="/^(.*\/assets)\/realpath\//i"
+ *     MapToVirtual="${1}/icons/" />
  * <behavior name="iconResizerGood" Class="Prado\Web\Assets\Behaviors\TAssetJPEGize"
  *     AttachToClass="Prado\Web\Assets\TAsset" MatchFiles="/\/icons\//i">
  *   <filter type="resize" FixedWidth="80" FixedHeight="80" CropFill="true" />
@@ -109,9 +114,9 @@ class TAssetVirtualize extends TBehavior implements IAssetVirtualize
 	/**
 	 * @var string The Regular Expression matching the real files.
 	 * The first capture group is the file name, and the second capture group
-	 * is the file extension.
-	 *   Linux Default: '/(?<=\/)([^\/]*?)\.([^\/\.]*)$/i'
-	 * Windows Default: '/(?<=\\)([^\\]*?)\.([^\\\.]*)$/i'
+	 * is the optional file extension.
+	 *   Linux Default: '/(?<=\/)([^\/]*?)(?:\.([^\/\.]*))?$/i'
+	 * Windows Default: '/(?<=\\)([^\\]*?)(?:\.([^\\\.]*))?$/i'
 	 */
 	private $_originalFiles;
 
@@ -200,8 +205,8 @@ class TAssetVirtualize extends TBehavior implements IAssetVirtualize
 	 * replacement string.
 	 *
 	 * @return string the regex for matching real filepaths
-	 *   Linux Default: '/(?<=\/)([^\/]*?)\.([^\/]*)$/i'
-	 * Windows Default: '/(?<=\\)([^\\]*?)\.([^\\]*)$/i'
+	 *   Linux Default: '/(?<=\/)([^\/]*?)(?:\.([^\/\.]*))?$/i'
+	 * Windows Default: '/(?<=\\)([^\\]*?)(?:\.([^\\\.]*))?$/i'
 	 */
 	public function getOriginalFiles()
 	{
@@ -253,9 +258,8 @@ class TAssetVirtualize extends TBehavior implements IAssetVirtualize
 	 * This is raised when setting the AssetFilePath before validation.
 	 * It matches the filePath against the regular expression from
 	 * getVirtualFiles.  If there is a match, the Asset is virtualized.
-	 * When virtualizing, this matches and replaces filePath against
-	 * {@see getVirtualFiles VirtualFiles} with replacement values from
-	 * {@see getMapFromVirtual MapFromVirtual}.
+	 * When virtualizing, this replaces the first match of {@see getVirtualFiles
+	 * VirtualFiles} in filePath with {@see getMapFromVirtual MapFromVirtual}.
 	 *
 	 * This event must call the chain first, rather than last, to purposefully
 	 * reverse the call chain.
@@ -269,7 +273,7 @@ class TAssetVirtualize extends TBehavior implements IAssetVirtualize
 		$filepath = $callchain->dySetAssetFilePathPre($filepath);
 		$this->_match = false;
 		if (!empty($filepath) && !$this->getOwner()->validatePath($filepath) && ($match = $this->getVirtualFiles()) && preg_match($match, $filepath)) {
-			$filepath = preg_replace($match, $replace = $this->getMapFromVirtual(), $inValue = $filepath);
+			$filepath = preg_replace($match, $replace = $this->getMapFromVirtual(), $inValue = $filepath, 1);
 			if ($filepath == $inValue) {
 				throw new TConfigurationException('assetvirtualize_no_alias_self', $match, $replace, $filepath);
 			}
@@ -281,9 +285,9 @@ class TAssetVirtualize extends TBehavior implements IAssetVirtualize
 	/**
 	 * This is raised when converting the validated asset into its
 	 * virtualized publishing filePath.  When virtualizing an asset,
-	 * the filePath is rewritten by matching and replacing with the
-	 * regular expression from {@see getOriginalFiles OriginalFiles} and the
-	 * replacement values from {@see getMapToVirtual MapToVirtual}
+	 * the filePath is rewritten by replacing the first match of the regular
+	 * expression {@see getOriginalFiles OriginalFiles} with {@see getMapToVirtual
+	 * MapToVirtual}.
 	 *
 	 * @param string $filepath
 	 * @param \Prado\Util\TCallChain $callchain
@@ -297,7 +301,7 @@ class TAssetVirtualize extends TBehavior implements IAssetVirtualize
 			$replace = $this->getMapToVirtual();
 			$inValue = $filepath;
 			if ($replace !== null && $replace !== '') {
-				$filepath = preg_replace($match, $replace, $filepath);
+				$filepath = preg_replace($match, $replace, $filepath, 1);
 			}
 			if ($filepath == $inValue || $replace === null || $replace === '') {
 				throw new TConfigurationException('assetvirtualize_no_publish_as_original', $match, $replace, $filepath);

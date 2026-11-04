@@ -5,12 +5,15 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
 
 use Prado\Exceptions\TInvalidDataValueException;
+use Prado\IO\Image\Meta\TEXIF;
+use Prado\IO\Image\TImageFile;
+use Prado\IO\Image\TJPEG;
 use Prado\TComponent;
 use Prado\Util\IBaseBehavior;
 use Prado\Web\Assets\Behaviors\TAssetGIFize;
@@ -237,12 +240,46 @@ class TAssetFormatBehaviorsTest extends PublishingTestCase
 		self::assertStringEndsWith('/photo.webp', $webpUrl);
 		self::assertSame([10, 5, IMAGETYPE_WEBP], array_slice(getimagesize($this->urlToPath($webpUrl)), 0, 3), 'A WebP destination is processed and stays WebP.');
 		self::assertStringEndsWith('/photo.png', $pngUrl);
-		self::assertSame([40, 20, IMAGETYPE_PNG], array_slice(getimagesize($this->urlToPath($pngUrl)), 0, 3), 'Other images are not processed.');
+		self::assertSame([10, 5, IMAGETYPE_PNG], array_slice(getimagesize($this->urlToPath($pngUrl)), 0, 3), 'Other images are processed and keep their type.');
 
 		$asset = new TImageAsset($png);
 		$asset->attachBehavior('webp', $behavior = new TAssetWebPize());
-		self::assertFalse($behavior->hasMatch());
-		self::assertFalse($behavior->hasMatch($this->assetDir . '/photo.png'));
+		self::assertTrue($behavior->hasMatch(), 'The Preserve fallback matches.');
 		self::assertTrue($behavior->hasMatch($this->assetDir . '/photo.WEBP'), 'A WebP destination matches.');
+	}
+
+	public function testWebPizePreserveFallbackScrubs(): void
+	{
+		$_SERVER['HTTP_ACCEPT'] = 'image/png,*/*';
+		$this->attachFormat(TAssetWebPize::class, [], '<metadata Scrub="All" />');
+		$jpeg = TJPEG::fromImage(static::createImage(), 90);
+		$exif = new TEXIF();
+		$exif->setLatitude(45.5);
+		$jpeg->setEXIF($exif);
+		$jpeg->save($source = $this->writeSource('located.jpg', ''));
+
+		$url = $this->publishFresh($source);
+
+		self::assertStringEndsWith('/located.jpg', $url, 'The Preserve fallback keeps the format.');
+		self::assertSame(IMAGETYPE_JPEG, getimagesize($published = $this->urlToPath($url))[2]);
+		self::assertNull(TImageFile::fromFile($published)->getEXIF()?->getLatitude(), 'The Scrub applies to a client without WebP.');
+	}
+
+	public function testGIFizeKeepsFullyTransparentPixelsTransparent(): void
+	{
+		foreach ([0x7FFFFFFF => 'white', 0x7F000000 => 'black', 0x7F00FF00 => 'green'] as $color => $label) {
+			$image = imagecreatetruecolor(10, 10);
+			imagealphablending($image, false);
+			imagesavealpha($image, true);
+			imagefilledrectangle($image, 0, 0, 9, 9, 0x00336699);
+			imagefilledrectangle($image, 0, 0, 4, 9, $color);
+			$this->attachFormat(TAssetGIFize::class);
+
+			$gif = imagecreatefromgif($this->urlToPath($this->publishFresh($this->writeImage("clear-$label.png", 10, 10, $image))));
+
+			self::assertNotSame(-1, $transparent = imagecolortransparent($gif));
+			self::assertSame($transparent, imagecolorat($gif, 1, 1), "A fully transparent $label pixel is transparent.");
+			self::assertNotSame($transparent, imagecolorat($gif, 8, 8), 'An opaque pixel is not.');
+		}
 	}
 }

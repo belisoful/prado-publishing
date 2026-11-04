@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
@@ -25,8 +25,9 @@ use Prado\Web\TAssetManager;
  * TAssetBlockerTest class.
  *
  * Tests the asset blocker: its configuration, the default blocked files, blocking by a
- * custom expression, substituting the NoAsset replacement for a blocked asset, and
- * publishing blocked files and directories end to end.
+ * custom expression, substituting the NoAsset replacement for a blocked asset, blocking
+ * the path as given before symbolic links resolve, and publishing blocked files and
+ * directories end to end.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  */
@@ -74,7 +75,7 @@ class TAssetBlockerTest extends PublishingTestCase
 	{
 		$blocker = new TAssetBlocker();
 
-		self::assertSame('/(\/\.|\.php$|cron\.jobs$|\.cache$|protected.application\.xml$|config\.xml$)/i', $blocker->getBlockedFiles());
+		self::assertSame('/(\/\.|\.(?:php\d*|phtml|phar|inc)$|(?:~|\.(?:bak|orig|old|swp|swo|save))$|\.(?:sqlite3?|db)$|cron\.jobs$|\.cache$|protected\/application\.xml$|protected\/data\/.*\.xml$|config\.xml$)/i', $blocker->getBlockedFiles());
 		self::assertSame('Application.Pages', $blocker->getNoAssetPath());
 		self::assertNull($blocker->getNoAssetFile());
 	}
@@ -144,6 +145,23 @@ class TAssetBlockerTest extends PublishingTestCase
 			'cache file' => ['data.cache', true],
 			'protected application.xml' => ['protected/application.xml', true],
 			'config.xml' => ['pages/config.xml', true],
+			'php backup with a tilde' => ['index.php~', true],
+			'php bak' => ['application.php.bak', true],
+			'php orig' => ['config.php.orig', true],
+			'old file' => ['script.js.old', true],
+			'swap file' => ['index.php.swp', true],
+			'phtml' => ['shell.phtml', true],
+			'phar' => ['x.phar', true],
+			'php7' => ['x.php7', true],
+			'inc' => ['db.inc', true],
+			'config.xml backup' => ['config.xml~', true],
+			'application.xml bak' => ['protected/application.xml.bak', true],
+			'protected data xml' => ['protected/data/users.xml', true],
+			'sqlite' => ['db.sqlite', true],
+			'sqlite3' => ['db.sqlite3', true],
+			'db' => ['app.db', true],
+			'xml outside protected data' => ['data/feed.xml', false],
+			'php7 in the name' => ['php7.txt', false],
 			'css file' => ['style.css', false],
 			'php in the name' => ['php.txt', false],
 			'application.xml outside protected' => ['application.xml', false],
@@ -269,6 +287,51 @@ class TAssetBlockerTest extends PublishingTestCase
 		]);
 
 		self::assertSame($noAsset, $asset->getAssetFilePath());
+	}
+
+	public function testIsBlockedFile(): void
+	{
+		$blocker = new TAssetBlocker();
+		$blocker->setBlockedFiles('/\.pdf$/');
+
+		self::assertTrue($blocker->isBlockedFile('/any/report.pdf'));
+		self::assertFalse($blocker->isBlockedFile('/any/report.txt'));
+		self::assertFalse($blocker->isBlockedFile(''));
+	}
+
+	public function testAHiddenSymbolicLinkToAPublicFileIsBlocked(): void
+	{
+		$key = $this->writeSource('secrets/key.pem', 'PRIVATE KEY');
+		$link = $this->createSymlink($key, $this->srcDir . DIRECTORY_SEPARATOR . '.env');
+
+		self::assertNull($this->blockedAsset($link)->getAssetFilePath(), 'The link name is tested as given.');
+
+		$asset = new TFileAsset($key);
+		$asset->attachBehavior('blocker', TAssetBlocker::class);
+		$asset->setAssetGivenFilePath($link);
+		self::assertNull($asset->getAssetFilePath(), 'The given path is tested without a NoAsset.');
+
+		$noAsset = $this->writeNoAsset('unavailable.txt');
+		$asset->asa('blocker')->setNoAssetPath(static::NOASSET_ALIAS);
+		$asset->asa('blocker')->setNoAssetFile('unavailable.txt');
+		self::assertSame($noAsset, $asset->getAssetFilePath(), 'The given path is substituted with a NoAsset.');
+	}
+
+	public function testHiddenSymbolicLinksInAPublishedDirectoryAreBlocked(): void
+	{
+		$this->attachClassBehavior('blocker', TAssetBlocker::class, TAsset::class);
+		$this->writeSource('secrets/key.pem', 'PRIVATE KEY');
+		$this->writeSource('pub/app.js', 'js');
+		$this->createSymlink($this->srcDir . '/secrets', $this->srcDir . '/pub/.private');
+		$this->createSymlink($this->srcDir . '/secrets/key.pem', $this->srcDir . '/pub/.env');
+		$manager = $this->newManager();
+
+		$dir = $this->urlToPath($manager->publish($this->srcDir . '/pub'));
+
+		self::assertSame(['app.js'], array_values(array_filter(scandir($dir), fn ($f) => $f[0] !== '.' && !str_starts_with($f, TAssetManager::DIRECTORY_COMPLETE_MARKER_PREFIX))));
+		self::assertFalse(is_file($dir . '/.env'));
+		self::assertFalse(is_file($dir . '/.private/key.pem'));
+		self::assertSame('', $manager->publish($this->srcDir . '/pub/.private/key.pem'), 'A file reached through a hidden directory link is blocked.');
 	}
 
 	public function testTheNoAssetMatchingTheBlockedFilesIsPublished(): void

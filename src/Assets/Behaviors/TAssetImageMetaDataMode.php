@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -17,7 +17,8 @@ namespace Prado\Web\Assets\Behaviors;
  * the carriers kept when the published image is written.
  *
  * The following enumerable values are defined:
- * - None: no metadata is preserved.
+ * - None: no metadata is preserved: the carriers, the JPEG comment, the PNG text
+ *   chunks, the GIF comments, and the data after the end of a JPEG or GIF are removed.
  * - Color: the ICC color profile is preserved.
  * - EXIF: the EXIF metadata is preserved.
  * - IPTC: the IPTC metadata is preserved.
@@ -25,14 +26,16 @@ namespace Prado\Web\Assets\Behaviors;
  * - All: every carrier the published format has a place for is preserved.
  *
  * MetaDataPreserve takes a list, so the carriers can be combined, e.g.
- * "EXIF, Color".  A carrier the published format has no place for is dropped.
+ * "EXIF, Color".  A carrier the published format has no place for is dropped.  Any
+ * value but All also removes the data after the end of a JPEG or GIF, such as the
+ * secondary images of a JPEG Multi-Picture Format file.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @since 0.1.0
  */
 class TAssetImageMetaDataMode extends \Prado\TEnumerable
 {
-	/** No metadata is preserved. */
+	/** No metadata is preserved, including the comments, the text chunks, and the data after the image. */
 	public const None = 'None';
 
 	/** The ICC color profile is preserved; the JPEG APP2, APP11, and APP14 segments. */

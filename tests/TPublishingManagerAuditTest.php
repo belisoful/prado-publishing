@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests;
@@ -16,13 +16,17 @@ use Prado\Prado;
 use Prado\TApplicationMode;
 use Prado\Web\Assets\Behaviors\TAssetBlocker;
 use Prado\Web\Assets\Behaviors\TAssetJPEGize;
+use Prado\Web\Assets\Behaviors\TAssetPNGize;
 use Prado\Web\Assets\TAsset;
 use Prado\Web\Assets\TFileAsset;
 use Prado\Web\Assets\TGDFAsset;
 use Prado\Web\Assets\TImageAsset;
+use Prado\Web\Assets\TTarAsset;
 use Prado\Web\TAssetManager;
 use Prado\Web\Tests\Fixtures\TAssetPathFilterBehavior;
 use Prado\Web\Tests\Fixtures\TGeneratedAsset;
+use Prado\Web\Tests\Fixtures\TPartialFileAsset;
+use Prado\Web\Tests\Fixtures\TRecordingAtomicManager;
 use Prado\Web\Tests\Fixtures\TSuffixAssetBehavior;
 use Prado\Web\Tests\Fixtures\TThrowingAssetBehavior;
 use Prado\Web\Tests\Fixtures\TUppercaseAssetBehavior;
@@ -37,8 +41,10 @@ use Prado\Test\Unit\Harness\IO\TarTestHelper;
  * performance mode, the tar archive cache key, resolved paths in class discovery and the
  * BasePath guard, the TAssetManager fallback of the published path and URL, symbolic
  * links and renames in published directories, the copy callback source, cleanup of a
- * failed write, atomic directory files, PublishOriginalNames, and linking pass-through
- * assets only.
+ * failed write, atomic directory files, PublishOriginalNames, linking pass-through
+ * assets only, renamed files colliding with another file, replacing a stale link, failed
+ * publishes, completion markers of cancelled publishes, the asset object cache, the
+ * BasePath guard of asset objects, and processed assets written through a temporary file.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  */
@@ -462,8 +468,10 @@ class TPublishingManagerAuditTest extends PublishingTestCase
 		} catch (\RuntimeException $e) {
 			self::assertSame('Processing failed.', $e->getMessage());
 		}
-		self::assertSame([$dst], TThrowingAssetBehavior::$processed, 'The file was written in place.');
-		self::assertFalse(is_file($dst), 'The partially processed file is removed.');
+		self::assertCount(1, TThrowingAssetBehavior::$processed);
+		self::assertStringStartsWith('tmp-', basename(TThrowingAssetBehavior::$processed[0]), 'A processed file is written to a temporary file.');
+		self::assertFalse(is_file($dst), 'The partially processed file is not published.');
+		self::assertSame([], glob(dirname($dst) . '/tmp-*'), 'No temporary file is left.');
 	}
 
 	public function testDirectoryFilesAreWrittenAtomically(): void
@@ -490,15 +498,44 @@ class TPublishingManagerAuditTest extends PublishingTestCase
 		self::assertSame('bad', file_get_contents($dir . '/bad.txt'), 'A republish writes the file.');
 	}
 
-	public function testNonAtomicDirectoryFilesAreWrittenInPlace(): void
+	public function testNonAtomicProcessedDirectoryFilesAreWrittenThroughATemporaryFile(): void
 	{
 		$this->attachClassBehavior('upper', TUppercaseAssetBehavior::class, TAsset::class);
 		$this->writeSource('inplace/a.txt', 'a');
 
 		$dir = $this->urlToPath($this->newManager(['Atomic' => false])->publish($this->srcDir . '/inplace'));
 
-		self::assertContains($dir . DIRECTORY_SEPARATOR . 'a.txt', TUppercaseAssetBehavior::$processed);
+		$files = array_values(array_filter(TUppercaseAssetBehavior::$processed, 'is_string'));
+		self::assertNotContains($dir . DIRECTORY_SEPARATOR . 'a.txt', $files, 'The file is not processed in place.');
+		self::assertCount(1, preg_grep('/' . preg_quote(DIRECTORY_SEPARATOR, '/') . 'tmp-[^' . preg_quote(DIRECTORY_SEPARATOR, '/') . ']*a\.txt$/', $files));
 		self::assertSame('A', file_get_contents($dir . '/a.txt'));
+	}
+
+	public function testNonAtomicPassThroughFilesAreCopiedInPlace(): void
+	{
+		$this->writeSource('inplace/a.txt', 'a');
+		$manager = $this->initManager(new TRecordingAtomicManager(), ['Atomic' => false]);
+
+		$dir = $this->urlToPath($manager->publish($this->srcDir . '/inplace'));
+		$url = $manager->publish($this->writeSource('single.txt', 'single'));
+
+		self::assertSame([], $manager->atomicWrites);
+		self::assertSame('a', file_get_contents($dir . '/a.txt'));
+		self::assertSame('single', file_get_contents($this->urlToPath($url)));
+	}
+
+	public function testTheAtomicOptionOfADirectoryPublishReachesItsFiles(): void
+	{
+		$this->writeSource('off/a.txt', 'a');
+		$this->writeSource('on/b.txt', 'b');
+		$atomicManager = $this->initManager(new TRecordingAtomicManager(), ['Atomic' => true]);
+		$plainManager = $this->initManager(new TRecordingAtomicManager(), ['Atomic' => false]);
+
+		$atomicManager->publish($this->srcDir . '/off', ['atomic' => false]);
+		$plainManager->publish($this->srcDir . '/on', ['atomic' => true]);
+
+		self::assertSame([], $atomicManager->atomicWrites, 'The atomic option off copies the files in place.');
+		self::assertSame(['b.txt'], $plainManager->atomicWrites, 'The atomic option on writes the files atomically.');
 	}
 
 	// ---------------------------------------------------------------------------
@@ -614,5 +651,197 @@ class TPublishingManagerAuditTest extends PublishingTestCase
 		self::assertSame('written', file_get_contents($this->urlToPath($writtenUrl)));
 		self::assertTrue(is_link($this->urlToPath($linkedUrl)), 'A disabled dyWriteAsset behavior does not prevent linking.');
 		self::assertSame('linked', file_get_contents($this->urlToPath($linkedUrl)));
+	}
+
+	// ---------------------------------------------------------------------------
+	// Renamed files colliding with another file
+	// ---------------------------------------------------------------------------
+
+	public function testARenamedFileCollidingWithAnotherFileTakesItsOwnNameAndTheNewExtension(): void
+	{
+		$this->attachClassBehavior('png', ['class' => TAssetPNGize::class], TImageAsset::class);
+		$jpg = $this->writeImage('collide/logo.jpg', 40, 20);
+		$png = $this->writeImage('collide/logo.png', 99, 77);
+		$manager = $this->newManager();
+
+		$pngUrl = $manager->publish($png);
+		$jpgUrl = $manager->publish($jpg);
+
+		self::assertSame('logo.png', basename($pngUrl));
+		self::assertSame('logo.jpg.png', basename($jpgUrl));
+		self::assertSame($jpgUrl, $manager->getPublishedUrl($jpg));
+		self::assertSame([99, 77], array_slice(getimagesize($this->urlToPath($pngUrl)), 0, 2), 'The real file keeps its name and content.');
+		self::assertSame([40, 20], array_slice(getimagesize($this->urlToPath($jpgUrl)), 0, 2));
+	}
+
+	public function testARenamedDirectoryFileCollidingWithAnotherFileTakesItsOwnNameAndTheNewExtension(): void
+	{
+		$this->attachClassBehavior('png', ['class' => TAssetPNGize::class], TImageAsset::class);
+		$this->writeImage('collidedir/logo.png', 99, 77);
+		$this->writeImage('collidedir/logo.jpg', 40, 20);
+		$this->writeImage('collidedir/icon.jpg', 10, 10);
+
+		$dir = $this->urlToPath($this->newManager()->publish($this->srcDir . '/collidedir'));
+
+		self::assertSame(['icon.png', 'logo.jpg.png', 'logo.png'], static::publishedNames($dir), 'A rename without a collision keeps its name.');
+		self::assertSame([99, 77], array_slice(getimagesize($dir . '/logo.png'), 0, 2));
+		self::assertSame([40, 20], array_slice(getimagesize($dir . '/logo.jpg.png'), 0, 2));
+	}
+
+	public function testCollisionFreeName(): void
+	{
+		$this->writeSource('names/logo.png');
+		$jpg = $this->writeSource('names/logo.jpg');
+		$dir = $this->srcDir . DIRECTORY_SEPARATOR . 'names';
+
+		self::assertSame('logo.jpg.png', TPublishingManager::collisionFreeName($dir, 'logo.png', 'logo.jpg', $jpg));
+		self::assertSame('logo.webp', TPublishingManager::collisionFreeName($dir, 'logo.webp', 'logo.jpg', $jpg), 'No other file has the name.');
+		self::assertSame('logo.png', TPublishingManager::collisionFreeName($dir, 'logo.png', 'logo.png'), 'The file is not renamed.');
+		self::assertSame('logo.jpg', TPublishingManager::collisionFreeName($dir, 'logo.jpg', 'other.jpg', $jpg), 'The other file is the source itself.');
+	}
+
+	// ---------------------------------------------------------------------------
+	// Stale links, failed publishes, and processed writes
+	// ---------------------------------------------------------------------------
+
+	public function testALinkIsReplacedWhenTheAssetGainsProcessing(): void
+	{
+		$this->createSymlink($this->writeSource('probe-target'), $this->srcDir . '/probe-link');
+		$source = $this->writeSource('stale.txt', 'raw');
+		$dst = $this->urlToPath($this->newManager(['LinkAssets' => true])->publish($source));
+		self::assertTrue(is_link($dst));
+		$process = fn ($sender, $param) => file_put_contents($param->getFilePath(), 'PROCESSED');
+
+		foreach (['atomic' => [true, true], 'non-atomic forced' => [false, ['forceCopy' => true]]] as $case => [$atomic, $flag]) {
+			$asset = new TFileAsset($source);
+			$asset->attachEventHandler('onProcessAsset', $process);
+			$this->newManager(['LinkAssets' => true, 'Atomic' => $atomic])->publish($asset, $flag);
+
+			self::assertFalse(is_link($dst), "The link is replaced, $case.");
+			self::assertSame('PROCESSED', file_get_contents($dst), "The processed file is published, $case.");
+			self::assertSame('raw', file_get_contents($source), "The source is not written through the link, $case.");
+			unlink($dst);
+			symlink($source, $dst);
+		}
+	}
+
+	public function testAFailedPublishPublishesNothing(): void
+	{
+		$source = $this->writeSource('partial.txt', 'full content');
+		foreach ([true, false] as $atomic) {
+			$manager = $this->newManager(['Atomic' => $atomic]);
+			$dst = $manager->getPublishedPath(new TPartialFileAsset($source));
+
+			$manager->publish(new TPartialFileAsset($source));
+
+			self::assertFalse(is_file($dst), 'No partial file is published, Atomic ' . var_export($atomic, true) . '.');
+			self::assertSame([], glob(dirname($dst) . '/tmp-*'), 'No temporary file is left.');
+		}
+	}
+
+	public function testAPublishReturningFalseIsNotMovedIntoPlace(): void
+	{
+		$asset = new TFileAsset($this->writeSource('vetoed.txt', 'content'));
+		$veto = new TAssetPathFilterBehavior();
+		$veto->writeFilter = function ($return, $dst) {
+			file_put_contents($dst, 'UNPROCESSED');
+			return false;
+		};
+		$asset->attachBehavior('veto', $veto);
+		$manager = $this->newManager(['Atomic' => false]);
+
+		$url = $manager->publish($asset);
+
+		self::assertFalse(is_file($this->urlToPath($url)));
+		self::assertSame([], glob(dirname($this->urlToPath($url)) . '/tmp-*'));
+	}
+
+	// ---------------------------------------------------------------------------
+	// Completion markers of cancelled publishes
+	// ---------------------------------------------------------------------------
+
+	public function testACancelledTarPublishWritesNoMarker(): void
+	{
+		$tar = $this->writeTar('cancelled/bundle.tar');
+		$asset = new TTarAsset($tar);
+		$veto = new TAssetPathFilterBehavior();
+		$veto->writeFilter = fn ($return, $dst) => false;
+		$asset->attachBehavior('veto', $veto);
+		$dir = $this->urlToPath($this->newManager()->publish($asset));
+		mkdir($dir);
+
+		$this->newManager()->publish($asset);
+
+		self::assertSame([], static::publishedNames($dir));
+		self::assertSame([], glob($dir . DIRECTORY_SEPARATOR . TAssetManager::DIRECTORY_COMPLETE_MARKER_PREFIX . '*'), 'A cancelled extraction is not marked.');
+
+		static::application()->setMode(TApplicationMode::Performance);
+		$this->newManager()->publishTarFile($tar);
+		self::assertTrue(is_file($dir . '/style.css'), 'A later publish extracts the archive.');
+	}
+
+	public function testACancelledGeneratedDirectoryWritesNoMarker(): void
+	{
+		$asset = new class ('/virtual/cancelled/site') extends TGeneratedAsset {
+			protected function isDirectory(string $path): bool
+			{
+				return true;
+			}
+
+			public function publish(string $dst): ?bool
+			{
+				$this->writtenTo[] = $dst;
+				return false;
+			}
+		};
+
+		$dir = $this->urlToPath($this->newManager()->publish($asset));
+
+		self::assertSame([$dir], $asset->writtenTo);
+		self::assertFalse(is_file($dir . DIRECTORY_SEPARATOR . TAssetManager::DIRECTORY_COMPLETE_MARKER_PREFIX . sha1('/virtual/cancelled/site')));
+	}
+
+	// ---------------------------------------------------------------------------
+	// The asset object cache and the BasePath guard
+	// ---------------------------------------------------------------------------
+
+	public function testAnotherAssetObjectOfTheSameClassAndPathIsPublishedItself(): void
+	{
+		$source = $this->writeSource('objects.txt', 'raw');
+		$manager = $this->newManager(['ForceCopy' => true]);
+		$manager->publish(new TFileAsset($source));
+		$processed = new TFileAsset($source);
+		$processed->attachEventHandler('onProcessAsset', fn ($sender, $param) => file_put_contents($param->getFilePath(), 'PROCESSED'));
+
+		$url = $manager->publish($processed);
+
+		self::assertSame('PROCESSED', file_get_contents($this->urlToPath($url)));
+		self::assertSame($url, $manager->publish($processed), 'The same object is cached.');
+	}
+
+	public function testAnAssetObjectOfTheBasePathOrAParentIsRejected(): void
+	{
+		$manager = $this->newManager();
+		foreach ([$this->tempDir, $this->assetDir] as $path) {
+			try {
+				$manager->publish(new TFileAsset($path));
+				self::fail('The BasePath or a parent is rejected.');
+			} catch (TInvalidDataValueException $e) {
+				self::assertStringContainsString('publishingmanager_filepath_invalid', $e->getErrorCode());
+			}
+		}
+		self::assertSame([], glob($this->assetDir . '/*'), 'Nothing is published.');
+	}
+
+	public function testAPathRewrittenToTheBasePathParentIsRejected(): void
+	{
+		$this->writeSource('rewritten/a.txt', 'a');
+		$asset = new TFileAsset($this->srcDir . '/rewritten');
+		$rewrite = new TAssetPathFilterBehavior();
+		$rewrite->preFilter = fn ($path) => $this->tempDir;
+		$asset->attachBehavior('rewrite', $rewrite);
+
+		$this->expectException(TInvalidDataValueException::class);
+		$this->newManager()->publish($asset);
 	}
 }

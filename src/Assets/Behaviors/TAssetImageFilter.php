@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -43,6 +43,14 @@ use Prado\Web\UI\TWebColor;
  * {@see getPaletteDither PaletteDither}, and the palette alpha properties),
  * {@see getSaveAlpha SaveAlpha}, {@see getSaveInterlace SaveInterlace},
  * {@see getBackgroundColor BackgroundColor}, and {@see getToBlackAndWhite ToBlackAndWhite}.
+ *
+ * An image no filter changes is published without re-encoding, keeping its encoded
+ * pixels. A format conversion with a saving property set re-encodes it with those
+ * properties even when it is already in the format ({@see getReencode}), so a
+ * {@see TAssetJPEGize} with an ImageQuality applies it to JPEG sources too.
+ *
+ * The formats without an alpha channel (JPEG, BMP, WBMP, XBM, and TIFF) are flattened
+ * onto the {@see getBackgroundColor BackgroundColor} when they are encoded.
  *
  * By default, MatchFiles excludes image files whose names end in ".full" or
  * ".original" before the extension, e.g. "photo.full.jpg", so those publish unchanged.
@@ -122,10 +130,13 @@ class TAssetImageFilter extends TAssetImagerBase
 	/** @var bool Should the end result saved image be black and white. default false. */
 	private bool $_toBlackAndWhite = false;
 
+	/** @var bool whether a saving property was set. */
+	private bool $_encodingSet = false;
+
 	/**
-	 * Default 60.  [0..100] are acceptable.  0 is minimum
-	 * quality with smallest file size, and 100 is maximum quality
-	 * with largest file size.
+	 * The JPEG and WebP quality, default 75.  [0..100] are acceptable.  0 is minimum
+	 * quality with smallest file size, and 100 is maximum quality with largest file
+	 * size.  -1 is the default quality of the encoder.
 	 * @return int the image quality of the resulting images
 	 */
 	public function getImageQuality(): int
@@ -138,6 +149,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setImageQuality($quality)
 	{
+		$this->_encodingSet = true;
 		$this->_imageQuality = max(-1, min(100, TPropertyValue::ensureInteger($quality)));
 	}
 
@@ -159,6 +171,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setPngQuality($quality)
 	{
+		$this->_encodingSet = true;
 		$this->_pngQuality = max(-1, min(9, TPropertyValue::ensureInteger($quality)));
 	}
 
@@ -194,6 +207,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setTiffCompression($value): void
 	{
+		$this->_encodingSet = true;
 		if (!is_numeric($value)) {
 			$name = strtolower(trim(TPropertyValue::ensureString($value)));
 			if (!array_key_exists($name, self::TIFF_COMPRESSIONS)) {
@@ -229,6 +243,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setPngColorMode($value)
 	{
+		$this->_encodingSet = true;
 		$this->_pngColorMode = TPropertyValue::ensureEnum($value, TAssetPNGColorMode::class);
 	}
 
@@ -245,6 +260,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setSaveAlpha($value)
 	{
+		$this->_encodingSet = true;
 		$this->_saveAlpha = TPropertyValue::ensureBoolean($value);
 	}
 
@@ -261,6 +277,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setSaveInterlace($value)
 	{
+		$this->_encodingSet = true;
 		if (!is_bool($value) && ($value === null || $value === '')) {
 			$this->_saveInterlace = null;
 		} else {
@@ -294,6 +311,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setBackgroundColor($value)
 	{
+		$this->_encodingSet = true;
 		$this->_backgroundColor = TPropertyValue::ensureHexColor($value);
 	}
 
@@ -312,6 +330,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setPalettizeTrueColor($value)
 	{
+		$this->_encodingSet = true;
 		$this->_palettizeTrueColor = TPropertyValue::ensureBoolean($value);
 	}
 
@@ -344,6 +363,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setPaletteColors($value)
 	{
+		$this->_encodingSet = true;
 		$this->_paletteColors = min(256, max(0, TPropertyValue::ensureInteger($value)));
 		if ($this->_paletteColors === 1) {
 			$this->_paletteColors = 0;
@@ -365,6 +385,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setPaletteDither($value)
 	{
+		$this->_encodingSet = true;
 		$this->_paletteDither = TPropertyValue::ensureBoolean($value);
 	}
 
@@ -410,6 +431,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setPaletteAlphaColor($value)
 	{
+		$this->_encodingSet = true;
 		if (is_numeric($value) || (is_string($value) && strtolower($value) == 'sides')) {
 			$this->_paletteAlphaColor = $value;
 			return;
@@ -424,8 +446,10 @@ class TAssetImageFilter extends TAssetImagerBase
 	}
 
 	/**
-	 * @return int Dither the colors when converting into a Palette
-	 *   on saving, default true.
+	 * When converting into a palette, pixels of this alpha or more are made the
+	 * transparent color.  127 makes only fully transparent pixels transparent, and 0
+	 * makes every pixel transparent.  Fully transparent pixels are always transparent.
+	 * @return int the palette alpha threshold [-1..127], default -1 for no threshold.
 	 */
 	public function getPaletteAlphaThreshold()
 	{
@@ -440,6 +464,7 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setPaletteAlphaThreshold($value)
 	{
+		$this->_encodingSet = true;
 		$this->_paletteAlphaThreshold = min(127, max(-1, TPropertyValue::ensureInteger($value)));
 	}
 
@@ -459,12 +484,13 @@ class TAssetImageFilter extends TAssetImagerBase
 	 */
 	public function setPaletteColorIsTransparent($value)
 	{
+		$this->_encodingSet = true;
 		$this->_paletteColorIsTransparent = TPropertyValue::ensureBoolean($value);
 	}
 
 	/**
-	 * @return bool Dither the colors when converting into a Palette
-	 *   on saving, default true.
+	 * @return bool whether the saved image is black and white, a two color palette,
+	 *   default false.
 	 */
 	public function getToBlackAndWhite(): bool
 	{
@@ -472,12 +498,34 @@ class TAssetImageFilter extends TAssetImagerBase
 	}
 
 	/**
-	 * @param bool $value Dither the colors when converting into a Palette
-	 *   on saving.
+	 * @param bool $value whether the saved image is black and white.
 	 */
 	public function setToBlackAndWhite($value)
 	{
+		$this->_encodingSet = true;
 		$this->_toBlackAndWhite = TPropertyValue::ensureBoolean($value);
+	}
+
+	/**
+	 * The image type a format conversion writes. This general filter keeps the type of
+	 * each image; the conversions ({@see TAssetJPEGize} and the others) override it.
+	 * @return ?int the IMAGETYPE_* constant, or null when the image keeps its type.
+	 */
+	protected function getConversionType(): ?int
+	{
+		return null;
+	}
+
+	/**
+	 * A format conversion with a saving property set re-encodes every image, so the
+	 * properties apply even to an image already in the format, such as the ImageQuality
+	 * of {@see TAssetJPEGize} on a JPEG.  An image that keeps its type, and a conversion
+	 * with the default saving properties, is not re-encoded unless a filter changes it.
+	 * @return bool whether every image is re-encoded.
+	 */
+	public function getReencode(): bool
+	{
+		return $this->_encodingSet && $this->getConversionType() !== null;
 	}
 
 	/**
@@ -490,7 +538,8 @@ class TAssetImageFilter extends TAssetImagerBase
 	 * method can retain transparency when changing the Transparent Color.
 	 * This also adds setting pixels above an alpha threshold to be transparent.
 	 * Lastly, this allows colors to match and be made transparent when alpha
-	 * values do not match.
+	 * values do not match.  A fully transparent pixel (alpha 127) is always made the
+	 * transparent color, whatever its color.
 	 *
 	 * @param object $image The image to process the Alpha Channel
 	 * @param int|string $transparentColor The transparent color or "Sides" to get the Alpha
@@ -590,7 +639,7 @@ class TAssetImageFilter extends TAssetImagerBase
 							continue;
 						}
 						$a = (($c >> 24) & 0x7F);
-						if ($c === $priorTransparent || ($matchColor && ($c & 0xFFFFFF) === $clearColor)) {
+						if ($c === $priorTransparent || $a === 127 || ($matchColor && ($c & 0xFFFFFF) === $clearColor)) {
 							imageSetPixel($image, $x, $y, $transparentColor);
 						} elseif ($a && $backgroundColor) {
 							$r = ($c >> 16) & 0xFF;
@@ -615,7 +664,7 @@ class TAssetImageFilter extends TAssetImagerBase
 						continue;
 					}
 					$a = (($c >> 24) & 0x7F);
-					if ($c === $priorTransparent) {
+					if ($c === $priorTransparent || $a === 127) {
 						imageSetPixel($image, $x, $y, $transparentColor);
 					} elseif ($a && $backgroundColor) {
 						$r = ($c >> 16) & 0xFF;
@@ -973,7 +1022,8 @@ class TAssetImageFilter extends TAssetImagerBase
 	 * Applies the saving properties to the image before it is encoded: the palette
 	 * conversion of {@see getPaletteColors PaletteColors} and the palette alpha
 	 * properties, the alpha channel of {@see getSaveAlpha SaveAlpha}, and
-	 * {@see getSaveInterlace SaveInterlace}.
+	 * {@see getSaveInterlace SaveInterlace}.  A type without an alpha channel (JPEG, BMP,
+	 * WBMP, XBM, and TIFF) is flattened onto the {@see getBackgroundColor BackgroundColor}.
 	 * @param object $image the image to prepare.
 	 * @param int $type the GD image type the image is encoded as.
 	 * @param ?int $paletteColors the number of palette colors of the source, 0 for true color.
@@ -986,6 +1036,8 @@ class TAssetImageFilter extends TAssetImagerBase
 		$pngColorMode = $this->getPngColorMode();
 		$trueColor = $type === IMAGETYPE_JPEG || $type === IMAGETYPE_WEBP || ($type === IMAGETYPE_PNG && $pngColorMode === TAssetPNGColorMode::TrueColor);
 		$bNw = $this->getToBlackAndWhite() || $type === IMAGETYPE_WBMP || $type === IMAGETYPE_XBM;
+		// The alpha channel is kept only by the types that carry one.
+		$saveAlpha = $this->getSaveAlpha() && !in_array($type, [IMAGETYPE_JPEG, IMAGETYPE_BMP, IMAGETYPE_WBMP, IMAGETYPE_XBM, IMAGETYPE_TIFF_II, IMAGETYPE_TIFF_MM], true);
 
 		if (!$this->getPalettizeTrueColor() && $trueColor) {
 			$pc = $paletteColors = 0;
@@ -1003,7 +1055,7 @@ class TAssetImageFilter extends TAssetImagerBase
 			// Pixels are replaced, not blended, when marking transparency.
 			imageAlphaBlending($image, false);
 			$bNw = $this->getToBlackAndWhite() || $type === IMAGETYPE_WBMP || $type === IMAGETYPE_XBM;
-			if (!$this->getSaveAlpha() || $bNw) {
+			if (!$saveAlpha || $bNw) {
 				$alphaRemoved = true;
 				self::imageRemoveAlpha($image, $c = $this->getBackgroundColorIndex($image));
 				imageColorDeallocate($image, $c);
@@ -1023,9 +1075,10 @@ class TAssetImageFilter extends TAssetImagerBase
 			}
 		}
 		imageAlphaBlending($image, false);
-		imageSaveAlpha($image, $saveAlpha = $this->getSaveAlpha());
+		imageSaveAlpha($image, $saveAlpha);
 		if (!$saveAlpha && !$alphaRemoved) {
-			//WebP doesn't respect imageSaveAlpha(false), remove alpha.
+			// WebP does not respect imageSaveAlpha(false), and the types without alpha drop
+			// it, so the alpha is flattened onto the background color.
 			self::imageRemoveAlpha($image, $c = $this->getBackgroundColorIndex($image));
 			imageColorDeallocate($image, $c);
 		}

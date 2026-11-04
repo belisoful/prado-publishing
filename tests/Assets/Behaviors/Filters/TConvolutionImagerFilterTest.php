@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors\Filters;
@@ -94,6 +94,23 @@ class TConvolutionImagerFilterTest extends PublishingTestCase
 		$filter->setOffset('-10');
 		self::assertSame(2.5, $filter->getDivisor());
 		self::assertSame(-10.0, $filter->getOffset());
+	}
+
+	public function testBadDivisor(): void
+	{
+		// Regression: a divisor of 0 was accepted.
+		$filter = new TConvolutionImagerFilter();
+		foreach (['0', 0.0, -0.0, '0.0', 'abc', INF, NAN] as $divisor) {
+			try {
+				$filter->setDivisor($divisor);
+				self::fail('An exception was expected for ' . var_export($divisor, true) . '.');
+			} catch (TInvalidDataValueException $e) {
+				self::assertSame('convolutionfilter_bad_divisor', $e->getErrorCode());
+			}
+		}
+		self::assertSame(1.0, $filter->getDivisor(), 'A rejected divisor is not stored.');
+		$filter->setDivisor('-2');
+		self::assertSame(-2.0, $filter->getDivisor(), 'A negative divisor is valid.');
 	}
 
 	public function testNoImage(): void

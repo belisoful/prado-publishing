@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
@@ -40,6 +40,7 @@ use Prado\Web\Assets\Behaviors\TAssetWebPize;
 use Prado\Web\Assets\Behaviors\TAssetXBMize;
 use Prado\Web\Assets\TAsset;
 use Prado\Web\Assets\TImageAsset;
+use Prado\Web\Tests\Fixtures\TGeneratedAsset;
 use Prado\Web\Tests\Fixtures\TGraphicslessImageFilter;
 use Prado\Web\Tests\Fixtures\TGraphicslessPNGize;
 use Prado\Web\Tests\Fixtures\TImagickImagerFilter;
@@ -496,5 +497,110 @@ class TAssetImagerTest extends PublishingTestCase
 		self::assertSame([20, 10, IMAGETYPE_PNG], array_slice(getimagesize($published), 0, 3));
 		$image = imagecreatefrompng($published);
 		self::assertSame(0x00FFFF, static::rgbAt($image, 2, 2), 'The GD resize and the Imagick negate both applied.');
+	}
+
+	/**
+	 * Writes a JPEG with GPS EXIF and a comment, followed by a secondary JPEG with its own
+	 * GPS EXIF, as a Multi-Picture Format file or a motion photo carries after its EOI.
+	 * @param string $relative the source path.
+	 * @return string the file path.
+	 */
+	protected function writeTrailedJpeg(string $relative): string
+	{
+		$jpeg = TJPEG::fromImage(static::createImage(), 95);
+		$exif = new TEXIF();
+		$exif->setValueByName('Artist', 'Ann Author');
+		$exif->setLatitude(45.5);
+		$jpeg->setEXIF($exif);
+		$jpeg->setComment('Taken at 123 Secret Street');
+		$second = TJPEG::fromImage(static::createImage(8, 4), 80);
+		$exif = new TEXIF();
+		$exif->setValueByName('Artist', 'Trailer Artist');
+		$exif->setLatitude(10.25);
+		$second->setEXIF($exif);
+		return $this->writeSource($relative, $jpeg->toBinary() . $second->toBinary());
+	}
+
+	public function testScrubRemovesTheDataAfterTheJpegEnd(): void
+	{
+		$this->attachImager(TAssetImageFilter::class, '<metadata Scrub="All" />');
+		$source = $this->writeTrailedJpeg('trailed.jpg');
+
+		$bytes = file_get_contents($published = $this->urlToPath($this->newManager()->publish($source)));
+
+		self::assertNull(TImageFile::fromFile($published)->getEXIF()?->getLatitude());
+		self::assertStringNotContainsString('Trailer Artist', $bytes, 'The secondary image after the EOI is removed without re-encoding.');
+		self::assertStringNotContainsString('Secret Street', $bytes);
+		self::assertSame(TImageFile::fromFile($source)->getHeight(), getimagesize($published)[1]);
+	}
+
+	public function testPreserveNoneRemovesTheDataAfterTheJpegEnd(): void
+	{
+		$this->attachImager(TAssetImageFilter::class, '<metadata MetaDataPreserve="None" />');
+		$source = $this->writeTrailedJpeg('trailed.jpg');
+
+		$bytes = file_get_contents($this->urlToPath($this->newManager()->publish($source)));
+
+		foreach (['Ann Author', 'Trailer Artist', 'Secret Street'] as $text) {
+			self::assertStringNotContainsString($text, $bytes);
+		}
+	}
+
+	public function testATiffWithoutReencodingFollowsMetaDataPreserve(): void
+	{
+		$this->attachImager(TAssetImageFilter::class, '<metadata MetaDataPreserve="None" />');
+		$tiff = TTIFF::fromImage(static::createImage());
+		$tiff->getEXIF()->setValueByName('Artist', 'Tiff Artist');
+		$tiff->getEXIF()->setLatitude(45.5);
+		$tiff->save($source = $this->writeSource('scan.tif', ''));
+
+		$published = $this->urlToPath($this->newManager()->publish($source));
+
+		self::assertStringNotContainsString('Tiff Artist', file_get_contents($published));
+		$file = TImageFile::fromFile($published);
+		self::assertNull($file->getEXIF()->getLatitude());
+		self::assertSame([40, 20], array_slice(getimagesize($published), 0, 2), 'The raster is kept.');
+	}
+
+	public function testAReencodedTiffKeepsItsEXIF(): void
+	{
+		$this->attachImager(TAssetImageFilter::class, '<filter type="Resize" MaximumWidth="20" />');
+		$tiff = TTIFF::fromImage(static::createImage());
+		$tiff->getEXIF()->setValueByName('Artist', 'Tiff Artist');
+		$tiff->save($source = $this->writeSource('scan.tif', ''));
+
+		$published = $this->urlToPath($this->newManager()->publish($source));
+
+		$file = TImageFile::fromFile($published);
+		self::assertSame([20, 10], [$file->getWidth(), $file->getHeight()]);
+		self::assertSame('Tiff Artist', $file->getEXIF()->getValueByName('Artist'), 'MetaDataPreserve All keeps the EXIF of a re-encoded TIFF.');
+	}
+
+	public function testTIFFizeCarriesTheScrubbedEXIF(): void
+	{
+		$this->attachImager(TAssetTIFFize::class, '<metadata Scrub="Location" />');
+		$source = $this->writeTrailedJpeg('photo.jpg');
+
+		$published = $this->urlToPath($url = $this->newManager()->publish($source));
+
+		self::assertStringEndsWith('/photo.tif', $url);
+		$file = TImageFile::fromFile($published);
+		self::assertSame('Ann Author', $file->getEXIF()->getValueByName('Artist'), 'The JPEG EXIF is carried into the TIFF.');
+		self::assertNull($file->getEXIF()->getLatitude(), 'The Scrub applies to it.');
+		self::assertStringNotContainsString('Trailer Artist', file_get_contents($published));
+	}
+
+	public function testAVirtualAssetRenamedBeforeItsMetaMatchFailsIsConverted(): void
+	{
+		$asset = new TGeneratedAsset('/virtual/pic.png');
+		ob_start();
+		imagepng(static::createImage());
+		$asset->content = (string) ob_get_clean();
+		$asset->attachBehavior('imager', ['class' => TAssetJPEGize::class, 'MetaMatch' => 'Keywords=portfolio']);
+
+		$url = $this->newManager()->publish($asset);
+
+		self::assertStringEndsWith('/pic.jpg', $url);
+		self::assertSame(IMAGETYPE_JPEG, getimagesize($this->urlToPath($url))[2], 'The content matches the extension it was renamed to.');
 	}
 }

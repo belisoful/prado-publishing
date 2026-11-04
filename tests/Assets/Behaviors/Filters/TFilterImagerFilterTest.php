@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors\Filters;
@@ -314,7 +314,37 @@ class TFilterImagerFilterTest extends PublishingTestCase
 		self::assertSame(0x101010, static::rgbAt($gd, 1, 1), 'No offsets do nothing.');
 
 		$image = static::newImagickImage(4, 4, 0x101010, 0x101010);
-		self::assertNull(static::newFilter('Colorize', [0, 0, 0, '64'])->filterImage($image), 'An alpha offset has no Imagick equivalent.');
+		self::assertTrue(static::newFilter('Colorize', [16, 0, 0, '64'])->filterImage($image), 'An alpha offset is colorized in GD.');
+		self::assertInstanceOf(\GdImage::class, $image, 'The filter leaves the GD image.');
+		self::assertSame(0x201010, static::rgbAt($image, 1, 1), 'GD adds the offsets.');
+		self::assertSame(64, (imagecolorat($image, 1, 1) >> 24) & 0x7F, 'GD adds the alpha offset.');
+	}
+
+	public function testImagickInGdThroughTheImager(): void
+	{
+		// Regression: an effect without an Imagick equivalent returned null and the image was not converted.
+		foreach (['Colorize' => [50, 0, 0, 40], 'Scatter' => [1, 4, '16711680']] as $effect => $args) {
+			$param = new TAssetEventParameter('onProcessAsset');
+			$param->setImage(static::newImagickImage());
+			self::assertTrue(static::applyFilter(static::newFilter($effect, $args), $param), "$effect changes the image.");
+			self::assertInstanceOf(\GdImage::class, $param->getImage(), "$effect leaves its GD image to the imager.");
+			self::assertTrue($param->getSaveImage());
+		}
+	}
+
+	public function testImagickBrightnessAndContrastKeepTheAlpha(): void
+	{
+		// Regression: ImageMagick 7 applied the brightness to the alpha channel too.
+		if (!TImageGraphics::hasImagick()) {
+			self::markTestSkipped('Imagick is not installed.');
+		}
+		foreach (['Brightness' => [50], 'Contrast' => [-50]] as $effect => $args) {
+			$image = new \Imagick();
+			$image->newImage(4, 4, new \ImagickPixel('rgba(200, 100, 50, 0.5)'));
+			$image->setImageFormat('png');
+			self::assertTrue(static::newFilter($effect, $args)->filterImage($image));
+			self::assertEqualsWithDelta(0.5, $image->getImagePixelColor(1, 1)->getColorValue(\Imagick::COLOR_ALPHA), 0.01, "$effect leaves the alpha as GD does.");
+		}
 	}
 
 	public function testImagickConvolutionEffects(): void
@@ -380,7 +410,8 @@ class TFilterImagerFilterTest extends PublishingTestCase
 		self::assertSame(0x102030, static::rgbAt($gd, 1, 1), 'A displacement of zero or less does nothing.');
 
 		$image = static::newImagickImage();
-		self::assertNull(static::newFilter('Scatter', [1, 3, '16711680, 3368652'])->filterImage($image), 'A list of colors has no Imagick equivalent.');
+		self::assertTrue(static::newFilter('Scatter', [1, 3, '16711680, 3368652'])->filterImage($image), 'A list of colors is scattered in GD.');
+		self::assertInstanceOf(\GdImage::class, $image, 'The filter leaves the GD image.');
 	}
 
 	public function testHandlerFlagsTheSave(): void

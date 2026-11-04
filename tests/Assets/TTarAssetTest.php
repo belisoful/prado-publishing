@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets;
@@ -13,11 +13,14 @@ namespace Prado\Web\Tests\Assets;
 use Prado\Exceptions\TInvalidDataValueException;
 use Prado\Exceptions\TIOException;
 use Prado\IO\TTarFileExtractor;
+use Prado\Web\Assets\Behaviors\TAssetBlocker;
+use Prado\Web\Assets\TAsset;
 use Prado\Web\Assets\TFileAsset;
 use Prado\Web\Assets\TTarAsset;
 use Prado\Web\Tests\Fixtures\TAssetPathFilterBehavior;
 use Prado\Web\Tests\Fixtures\TProbeTarAsset;
 use Prado\Web\Tests\PublishingTestCase;
+use Prado\Web\TAssetManager;
 use Prado\Test\Unit\Harness\IO\TarTestHelper;
 
 /**
@@ -26,7 +29,8 @@ use Prado\Test\Unit\Harness\IO\TarTestHelper;
  * Tests the tar archive asset: its checksum file and extraction settings, the published
  * directory and completion marker names, path validation, modification dates, and
  * extraction on publish, including checksum verification, the options reaching the
- * extractor, virtual archives extracted from a temporary file, and failures.
+ * extractor, virtual archives extracted from a temporary file, blocked entries, and
+ * failures.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  */
@@ -313,13 +317,13 @@ class TTarAssetTest extends PublishingTestCase
 		self::assertSame($md5, $asset->getMd5FileRealPath());
 	}
 
-	public function testPublishFilePathWithoutAChecksumIsTheArchiveDirectory(): void
+	public function testPublishFilePathWithoutAChecksumIsTheArchiveItself(): void
 	{
 		$tar = $this->writeTar('archives/bundle.tar');
 
 		$asset = new TTarAsset($tar);
 
-		self::assertSame($this->srcDir . DIRECTORY_SEPARATOR . 'archives' . DIRECTORY_SEPARATOR, $asset->getAssetPublishFilePath());
+		self::assertSame($tar . DIRECTORY_SEPARATOR, $asset->getAssetPublishFilePath());
 		self::assertNull($asset->getMd5FileRealPath());
 	}
 
@@ -402,7 +406,7 @@ class TTarAssetTest extends PublishingTestCase
 		$asset->setAssetFilePath($this->srcDir . '/generated/bundle.tar');
 
 		self::assertSame($this->srcDir . '/generated/bundle.tar', $asset->getAssetFilePath());
-		self::assertSame($this->srcDir . DIRECTORY_SEPARATOR . 'generated' . DIRECTORY_SEPARATOR, $asset->getAssetPublishFilePath());
+		self::assertSame($this->srcDir . DIRECTORY_SEPARATOR . 'generated' . DIRECTORY_SEPARATOR . 'bundle.tar' . DIRECTORY_SEPARATOR, $asset->getAssetPublishFilePath());
 	}
 
 	public function testExtractedMarkerSourceIsTheChecksumOrTheArchive(): void
@@ -773,6 +777,83 @@ class TTarAssetTest extends PublishingTestCase
 
 		self::assertTrue(is_dir($dst . '/bundle.md5'), 'The checksum cannot replace a directory of the same name.');
 		self::assertSame(['bundle.md5', 'style.css'], static::entries($dst), 'The temporary checksum copy is removed.');
+	}
+
+	// ---------------------------------------------------------------------------
+	// Blocked entries
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * @return string[] archive entries a default blocker blocks, beside public ones.
+	 */
+	protected static function blockedEntries(): array
+	{
+		return [
+			TarTestHelper::entry('ok.js', 'js'),
+			TarTestHelper::entry('evil.php', '<?php phpinfo();'),
+			TarTestHelper::entry('.htaccess', 'Options +ExecCGI'),
+			TarTestHelper::entry('lib/', '', '5'),
+			TarTestHelper::entry('lib/app.js', 'app'),
+			TarTestHelper::entry('lib/shell.phtml', '<?php'),
+			TarTestHelper::entry('.git/', '', '5'),
+			TarTestHelper::entry('.git/config', 'secret'),
+			TarTestHelper::entry('public/', '', '5'),
+			TarTestHelper::entry('public/index.html', 'html'),
+		];
+	}
+
+	public function testBlockedEntriesAreNotExtracted(): void
+	{
+		$tar = $this->writeTar('blocked/bundle.tar', static::blockedEntries());
+		foreach (['atomic' => true, 'direct' => false] as $case => $atomic) {
+			$asset = new TTarAsset($tar);
+			$asset->attachBehavior('blocker', TAssetBlocker::class);
+			$asset->setAtomic($atomic);
+			$dst = $this->assetDir . '/' . $case;
+
+			self::assertTrue($asset->publish($dst));
+
+			self::assertSame(['lib', 'ok.js', 'public'], static::entries($dst), "The blocked entries are not extracted, $case.");
+			self::assertSame(['app.js'], static::entries($dst . '/lib'), "A directory holding a blocked entry keeps its other entries, $case.");
+			self::assertSame('html', file_get_contents($dst . '/public/index.html'));
+			self::assertArrayNotHasKey('evil.php', array_filter($asset->getExtractor()->getExtractManifest(), fn ($entry) => !empty($entry['extracted'])));
+		}
+	}
+
+	public function testBlockedEntriesOfACustomExtractorAreRemoved(): void
+	{
+		$tar = $this->writeTar('blocked/bundle.tar', static::blockedEntries());
+		$asset = new TProbeTarAsset($tar);
+		$asset->extractorFactory = fn ($path) => new TTarFileExtractor($path);
+		$asset->attachBehavior('blocker', TAssetBlocker::class);
+		$dst = $this->assetDir . '/custom';
+
+		self::assertTrue($asset->publish($dst));
+
+		self::assertSame(['lib', 'ok.js', 'public'], static::entries($dst));
+		self::assertSame(['app.js'], static::entries($dst . '/lib'));
+	}
+
+	public function testAClassBlockerBlocksTheEntriesOfAPublishedArchive(): void
+	{
+		$this->attachClassBehavior('blocker', TAssetBlocker::class, TAsset::class);
+		$tar = $this->writeTar('blocked/bundle.tar', static::blockedEntries());
+
+		$dir = $this->urlToPath($this->newManager()->publishTarFile($tar));
+
+		self::assertSame(['lib', 'ok.js', 'public'], array_values(array_filter(static::entries($dir), fn ($name) => !str_starts_with($name, TAssetManager::DIRECTORY_COMPLETE_MARKER_PREFIX))));
+	}
+
+	public function testEntriesAreExtractedWithoutAnEnabledBlocker(): void
+	{
+		$tar = $this->writeTar('blocked/bundle.tar', static::blockedEntries());
+		$asset = new TTarAsset($tar);
+		$asset->attachBehavior('blocker', TAssetBlocker::class);
+		$asset->disableBehavior('blocker');
+
+		self::assertTrue($asset->publish($dst = $this->assetDir . '/open'));
+
+		self::assertSame(['.git', '.htaccess', 'evil.php', 'lib', 'ok.js', 'public'], static::entries($dst));
 	}
 
 	// ---------------------------------------------------------------------------

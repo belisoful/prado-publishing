@@ -50,6 +50,7 @@ assetcompress_compressor_invalid			= TAssetCompress.Compressor ''{0}'' is not a 
 
 assetdiscovery_requires_class				= TAssetDiscovery.RoutedClass is required to route matching asset file paths.
 assetduplicate_recursive					= TAssetDuplicate is recursing: MatchFiles ''{0}'' with MatchReplacement ''{1}'' still matches the duplicate ''{2}''.
+assetduplicate_requires_publishing_manager	= TAssetDuplicate requires a Prado\Web\TPublishingManager to publish the duplicate of ''{0}''.
 assetvirtualize_no_alias_self				= TAssetVirtualize.MapFromVirtual ''{1}'' with VirtualFiles ''{0}'' maps the virtual file path ''{2}'' to itself.
 assetvirtualize_no_publish_as_original		= TAssetVirtualize.MapToVirtual ''{1}'' with OriginalFiles ''{0}'' does not map the file path ''{2}'' to a virtual file path.
 
@@ -58,12 +59,16 @@ assetimagerbase_filterfile_not_load			= TAssetImagerBase.FilterFile ''{0}'' coul
 assetimagerbase_bad_metaclass				= TAssetImagerBase.MetaClass ''{0}'' is not a Prado\Web\Assets\Behaviors\TAssetImageMetaData class.
 assetimagerbase_encode_failed				= TAssetImagerBase could not encode the image of ''{0}'' as image type ''{1}''.
 assetimagerbase_write_failed				= TAssetImagerBase could not write the image to ''{0}''.
+assetimagerbase_image_too_large				= TAssetImagerBase cannot process ''{0}'': its {1}x{2} pixels are more than MaximumPixels ''{3}''.
 
 imagerfilterfactory_config_array_required	= An imager filter configuration must be an array or an XML element.
 imagerfilterfactory_no_filter_type			= The imager filter ''{0}'' requires a 'class' or a 'type'.
 imagerfilterfactory_bad_type				= The imager filter type ''{0}'' is not a known filter type.
 imagerfilterfactory_cannot_class_type		= An imager filter cannot have both a class ''{0}'' and a type ''{1}''.
 imagerfilterfactory_bad_class				= The imager filter class ''{0}'' must be an instantiable Prado\Web\Assets\Behaviors\Filters\IBaseImagerFilter class.
+imagerfilterfactory_duplicate_name			= The imager filter name ''{0}'' is used by more than one filter.
+imagerfilterfactory_type_conflict			= The imager filter type ''{0}'' conflicts with its {1} ''{2}''.
+imagerfilter_output_too_large				= The imager filter {0} would make an image of {1} x {2} pixels, more than its MaximumOutputPixels of {3}.
 
 metadata_bad_mode							= TAssetImageMetaData.MetaInterpolationMode ''{0}'' is invalid.
 metadata_bad_jfif_size						= TAssetImageMetaData.JFIFSize ''{0}'' is invalid; it must be "width" or "width x height".
@@ -72,16 +77,20 @@ metadata_bad_jfif_mode						= TAssetImageMetaData.JFIFMode ''{0}'' is not a Prad
 metadata_bad_exif_thumbnail_size			= TAssetImageMetaData.ExifThumbnailSize ''{0}'' is invalid; it must be "width" or "width x height".
 metadata_bad_scrub							= TAssetImageMetaData.Scrub ''{0}'' is not a Prado\IO\Image\TPrivacyCategory name.
 metadata_bad_field							= TAssetImageMetaData field ''{0}'' is not a known IPTC, EXIF, or XMP field.
+metadata_write_failed						= TAssetImageMetaData could not write the metadata of ''{0}'': {1}
 
 metadatafilter_bad_field					= TMetaDataImagerFilter <meta> name ''{0}'' is not a known IPTC, EXIF, or XMP field.
 autocropimagerfilter_bad_crop_mode			= TAutoCropImagerFilter.CropMode ''{0}'' is invalid.
 convolutionfilter_bad_matrix				= TConvolutionImagerFilter.Matrix must be a 3x3 matrix.
+convolutionfilter_bad_divisor				= TConvolutionImagerFilter.Divisor ''{0}'' is invalid; it must be a finite number other than 0.
 gammacorrectimagerfilter_bad_gamma			= TGammaCorrectImagerFilter gamma ''{0}'' is invalid; it must be greater than 0.
 filterimagerfilter_bad_effect				= TFilterImagerFilter.Effect ''{0}'' is invalid.
 imageimagerfilter_bad_mode					= TImageImagerFilter.ImageInterpolationMode ''{0}'' is invalid.
 imageimagerfilter_bad_image_file_path		= TImageImagerFilter image file ''{0}'' does not exist in namespace ''{1}''.
+imageimagerfilter_bad_namespace				= TImageImagerFilter.ImageNamespace ''{0}'' is not a directory.
 resizeimagerfilter_bad_max_pixel_format		= TResizeImagerFilter.MaximumPixels ''{0}'' is invalid; it must be "pixels" or "width x height".
 resizeimagerfilter_bad_mode					= TResizeImagerFilter.ResizeMode ''{0}'' is invalid.
 textimagerfilter_bad_font_namespace			= TTextImagerFilter.FontNamespace path ''{0}'' does not exist.
+textimagerfilter_font_outside_namespace		= TTextImagerFilter font ''{0}'' is not inside the FontNamespace ''{1}''.
 textimagerfilter_bad_gd_font				= TTextImagerFilter.GDFont ''{0}'' is not a valid GD font.
 textimagerfilter_gdf_bad_endian				= TTextImagerFilter.GDFont ''{0}'' is not in this machine's byte order; publish it as a TGDFAsset to convert it.

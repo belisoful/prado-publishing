@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -101,7 +101,15 @@ use Prado\Xml\TXmlDocument;
  * files are processed. When several imagers match the same asset, they share one image:
  * the first to open it saves it, with its own saving properties and `<metadata>`
  * configuration, after every imager's filters have run, and the last to set the image
- * type decides the saved format.
+ * type decides the saved format. The privacy settings of every matching imager apply,
+ * whatever the order the imagers run in: the {@see TAssetImageMetaData::setScrub Scrub}
+ * categories are combined, and a carrier is kept only when every imager's
+ * {@see TAssetImageMetaData::setMetaDataPreserve MetaDataPreserve} keeps it.
+ *
+ * {@see getMaximumPixels MaximumPixels} limits the size of the images decoded, from the
+ * dimensions the file declares, so a small file that declares a huge image cannot
+ * exhaust the memory of the graphics library. A larger image throws and is not
+ * published.
  *
  * The `<metadata>` element configures the {@see TAssetImageMetaData} that
  * carries the image metadata (EXIF, XMP, IPTC, and the ICC profile) into the published
@@ -124,7 +132,9 @@ use Prado\Xml\TXmlDocument;
  * tested when the path is matched, on the source file. For a virtual asset (one whose
  * {@see \Prado\Web\Assets\TAsset::getIsVirtual IsVirtual} is true), which has no file
  * until it is written, the MetaMatch is tested on the written file while publishing;
- * an image that does not match is published unprocessed.
+ * an image that does not match is published unprocessed. A format conversion renames a
+ * virtual asset before its MetaMatch is tested, so an image it renamed that does not
+ * match is still converted to the format of its name, without the filters.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @since 0.1.0
@@ -170,6 +180,15 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 
 	/** @var float the priority of this imager among the finalizers of a publish. */
 	private float $_finalizerPriority = 5.0;
+
+	/** @var int the most pixels of an image decoded, 0 for no limit. */
+	private int $_maximumPixels = 50000000;
+
+	/** @var ?int the image type a conversion renamed the asset to while its MetaMatch was pending. */
+	protected ?int $_pendingConversion = null;
+
+	/** @var bool whether the filters are skipped, for an image only converted. */
+	private bool $_convertOnly = false;
 
 	/**
 	 * Sets the MatchFiles to all supported types (gif, jpg, jpeg, png, bmp, wbmp, xbm,
@@ -341,6 +360,7 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	{
 		$this->_matchFiles = TPropertyValue::ensureString($value);
 		$this->_match = null;
+		$this->_pendingConversion = null;
 	}
 
 	/**
@@ -358,6 +378,7 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	{
 		$this->_metaMatch = TPropertyValue::ensureString($value);
 		$this->_match = null;
+		$this->_pendingConversion = null;
 	}
 
 	/**
@@ -398,6 +419,27 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	public function setFinalizerPriority($value): void
 	{
 		$this->_finalizerPriority = TPropertyValue::ensureFloat($value);
+	}
+
+	/**
+	 * The most pixels (width times height) of an image this imager decodes, read from the
+	 * dimensions the file declares before it is decoded. The graphics libraries allocate
+	 * the decoded image outside the PHP memory limit, so a small file declaring a huge
+	 * image would otherwise exhaust the memory of the server. A larger image throws and is
+	 * not published. The limit also caps the pixel area Imagick decodes.
+	 * @return int the most pixels decoded, default 50000000 (50 megapixels); 0 for no limit.
+	 */
+	public function getMaximumPixels(): int
+	{
+		return $this->_maximumPixels;
+	}
+
+	/**
+	 * @param int|string $value the most pixels decoded; 0 for no limit.
+	 */
+	public function setMaximumPixels($value): void
+	{
+		$this->_maximumPixels = max(0, TPropertyValue::ensureInteger($value));
 	}
 
 	/**
@@ -448,6 +490,7 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	public function dyResetFilePathCache($callchain)
 	{
 		$this->_metaData = null;
+		$this->_pendingConversion = null;
 		return $callchain->dyResetFilePathCache();
 	}
 
@@ -463,6 +506,7 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	public function dyRewriteFilePath($filePath, $callchain = null)
 	{
 		$this->_match = null;
+		$this->_pendingConversion = null;
 		return $callchain ? $callchain->dyRewriteFilePath($filePath) : $filePath;
 	}
 
@@ -496,6 +540,29 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 			$this->_match = false;
 		}
 		return $this->_match;
+	}
+
+	/**
+	 * Renames a matching file path to the extension of the image type a format
+	 * conversion writes. The file is only renamed when the image can be written in the
+	 * type ({@see canEncode}). A virtual asset is renamed while its
+	 * {@see setMetaMatch MetaMatch} is pending; the conversion is remembered, so the image
+	 * is converted to the type of its name even when the MetaMatch then fails.
+	 * @param null|string $filePath the file path.
+	 * @param int $type the IMAGETYPE_* constant of the conversion.
+	 * @param string $extension the file extension of the type, without the dot.
+	 * @return null|string the file path, renamed when it matches.
+	 */
+	protected function renameForConversion($filePath, int $type, string $extension)
+	{
+		if (empty($filePath) || ($this->_pendingConversion !== $type && !$this->hasMatch()) || !$this->canEncode($type)) {
+			return $filePath;
+		}
+		if ($this->_match === 1) {
+			$this->_pendingConversion = $type;
+		}
+		$sep = (DIRECTORY_SEPARATOR === '/') ? '\\/' : '\\\\';
+		return preg_replace('/(?<=' . $sep . ')([^' . $sep . ']*?)(\.[^' . $sep . '\.]*)?$/i', '${1}.' . $extension, $filePath);
 	}
 
 	/**
@@ -666,6 +733,7 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 			return @imagecreatefromxbm($filePath);
 		}
 		if (($bytes = @file_get_contents($filePath)) !== false) {
+			$this->limitImagick();
 			foreach ([TImageGraphicsMode::GD, TImageGraphicsMode::Imagick] as $mode) {
 				// GD first: it keeps a palette image's palette, which the saving properties
 				// preserve. Imagick reads what GD cannot, such as CMYK JPEG, PSD, and HEIC.
@@ -686,14 +754,68 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 		return false;
 	}
 
+	/**
+	 * Caps the pixel area Imagick decodes at {@see getMaximumPixels MaximumPixels}, when
+	 * Imagick is installed and its limit is higher. The limit is set for the process.
+	 */
+	protected function limitImagick(): void
+	{
+		if (($maximum = $this->getMaximumPixels()) > 0 && TImageGraphics::hasImagick()) {
+			$current = \Imagick::getResourceLimit(\Imagick::RESOURCETYPE_AREA);
+			if ($current <= 0 || $current > $maximum) {
+				\Imagick::setResourceLimit(\Imagick::RESOURCETYPE_AREA, $maximum);
+			}
+		}
+	}
 
+	/**
+	 * Throws when the image declares more pixels than {@see getMaximumPixels MaximumPixels}.
+	 * @param TAssetImageMetaData $metaData the metadata of the image.
+	 * @param string $filePath the image file.
+	 * @throws TInvalidDataValueException when the image is too large to decode.
+	 */
+	protected function checkImageSize($metaData, string $filePath): void
+	{
+		if (($maximum = $this->getMaximumPixels()) > 0 && ($size = $metaData->getImageSize()) && $size[0] * $size[1] > $maximum) {
+			throw new TInvalidDataValueException('assetimagerbase_image_too_large', $filePath, $size[0], $size[1], $maximum);
+		}
+	}
+
+	/**
+	 * Adds the privacy settings of this imager to the metadata of an image another imager
+	 * opened: the {@see TAssetImageMetaData::setScrub Scrub} categories are combined, and
+	 * a carrier stays kept only when this imager also keeps it.
+	 * @param TAssetImageMetaData $metaData the metadata of the shared image.
+	 */
+	protected function mergeMetaDataConfig(TAssetImageMetaData $metaData): void
+	{
+		$own = $this->createMetaData();
+		$metaData->setScrub($metaData->getScrub() | $own->getScrub());
+		if ($metaData->getPreservesAll() && $own->getPreservesAll()) {
+			return;
+		}
+		$preserve = [];
+		foreach ([TAssetImageMetaDataMode::EXIF, TAssetImageMetaDataMode::XMP, TAssetImageMetaDataMode::IPTC, TAssetImageMetaDataMode::Color] as $mode) {
+			if ($metaData->getIsPreserved($mode) && $own->getIsPreserved($mode)) {
+				$preserve[] = $mode;
+			}
+		}
+		$metaData->setMetaDataPreserve($preserve);
+	}
 
 	/**
 	 * Opens the image and runs the filters on it.  The metadata is read before the image
-	 * can be re-encoded.  An image that cannot be opened is not published.
+	 * can be re-encoded.  An image that cannot be opened is not published.  When another
+	 * imager opened the image, the privacy settings of this imager are added to its
+	 * metadata ({@see mergeMetaDataConfig}).
+	 *
+	 * A virtual asset a format conversion renamed while its MetaMatch was pending, and
+	 * that does not match, is converted to the type of its name without the filters.
 	 * @param object $asset the TAsset being published.
 	 * @param TAssetEventParameter $param the publishing parameter, holding the file being
 	 *   processed, the asset, and the image shared by the imagers of the asset.
+	 * @throws TInvalidDataValueException when the image declares more pixels than
+	 *   {@see getMaximumPixels MaximumPixels}.
 	 */
 	public function processAsset($asset, $param)
 	{
@@ -701,8 +823,15 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 			return;
 		}
 		$dst = $param->getFilePath();
-		if (!$this->getEnabled() || !$dst || !$this->hasMatch($dst, $asset)) {
+		if (!$this->getEnabled() || !$dst) {
 			return;
+		}
+		$convertOnly = false;
+		if (!$this->hasMatch($dst, $asset)) {
+			if ($this->_pendingConversion === null) {
+				return;
+			}
+			$convertOnly = true; // The asset was renamed to the type before the MetaMatch failed.
 		}
 
 		if (!($image = $param->getImage())) {
@@ -715,6 +844,7 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 				$param->setFilePath('');
 				return true;
 			}
+			$this->checkImageSize($metaData, $dst);
 			$metaData->loadMetaData();
 			$image = $this->openImage($metaData, $dst, $imageType) ?: null;
 			if ($image) {
@@ -730,9 +860,16 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 				$param->setImageMetaData($metaData);
 				$param->addFinalizer($this, $this->getFinalizerPriority());
 			}
+		} elseif ($metaData = $param->getImageMetaData()) {
+			$this->mergeMetaDataConfig($metaData);
 		}
 		if ($image) {
-			$this->applyFilters($param);
+			$this->_convertOnly = $convertOnly;
+			try {
+				$this->applyFilters($param);
+			} finally {
+				$this->_convertOnly = false;
+			}
 		} else {
 			@unlink($dst);
 			$param->setFilePath('');
@@ -741,11 +878,12 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	}
 
 	/**
-	 * Finalizes the publishing of an image. When a filter changed the image, or the
-	 * image type changes, the image is saved by {@see saveImage} and the metadata is
-	 * written into it. Otherwise, when the metadata needs writing (an edit, a dropped
-	 * carrier, or a privacy scrub), only the metadata is rewritten, leaving the encoded
-	 * pixels untouched.
+	 * Finalizes the publishing of an image. When a filter changed the image, the image
+	 * type changes, or the imager re-encodes every image ({@see getReencode}), the image
+	 * is saved by {@see saveImage} and the metadata is written into it. Otherwise, when
+	 * the metadata needs writing (an edit, a dropped carrier, or a privacy scrub), only the
+	 * metadata is rewritten, leaving the encoded pixels untouched. A metadata write that
+	 * fails while metadata is removed throws ({@see TAssetImageMetaData::getRemovesMetaData}).
 	 *
 	 * An image type that no graphics library writes ({@see canEncode}) leaves the file
 	 * written before the processing in place, and the asset publishes unprocessed, as the
@@ -756,8 +894,9 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	 * The manager removes the unfinished file.
 	 * @param string $dstFile the destination file to finalize
 	 * @param \Prado\Web\Assets\TAssetEventParameter $param
-	 * @throws TIOException when the image cannot be encoded as its image type, or the
-	 *   encoded image cannot be written to the destination.
+	 * @throws TIOException when the image cannot be encoded as its image type, the
+	 *   encoded image cannot be written to the destination, or metadata that is removed
+	 *   cannot be written.
 	 */
 	public function finalize($dstFile, $param)
 	{
@@ -766,7 +905,7 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 		}
 		$type = $param->getImageType();
 		$metaData = $param->getImageMetaData();
-		if ($param->getSaveImage() || $param->getOriginalImageType() !== $type) {
+		if ($param->getSaveImage() || $param->getOriginalImageType() !== $type || $this->getReencode()) {
 			if (!$this->canEncode($type)) {
 				// No graphics library writes the image type, so the file written before the
 				// processing stays and the asset publishes unprocessed, as the rename that
@@ -792,8 +931,19 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	}
 
 	/**
+	 * Whether the image is encoded again even when no filter changed it and its type is
+	 * unchanged, so the saving properties apply to it. The base imager does not.
+	 * @return bool whether every image is re-encoded.
+	 */
+	public function getReencode(): bool
+	{
+		return false;
+	}
+
+	/**
 	 * Runs the enabled filters, in order, on the parameter's image. A filter that changes
-	 * the image stores its (possibly new) image and flags the image to be saved.
+	 * the image stores its (possibly new) image and flags the image to be saved. No filter
+	 * runs on an image that is only converted to the type of its name.
 	 *
 	 * The image is converted into the graphics library a filter works in
 	 * ({@see \Prado\Web\Assets\Behaviors\Filters\IBaseImagerFilter::getGraphicsMode}) when
@@ -805,6 +955,9 @@ abstract class TAssetImagerBase extends TBehavior implements IBaseImager, IAsset
 	public function applyFilters(TAssetEventParameter $param): bool
 	{
 		$changed = false;
+		if ($this->_convertOnly) {
+			return $changed; // The image is converted without the filters.
+		}
 		foreach ($this->getFilters() as $name => $filter) {
 			if (!$filter->getEnabled() || !($image = $param->getImage())) {
 				continue;

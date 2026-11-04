@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors\Filters;
@@ -182,6 +182,38 @@ class TImagerFilterFactoryTest extends PublishingTestCase
 				self::assertSame($code, $e->getErrorCode());
 			}
 		}
+	}
+
+	public function testParseRejectsConflicts(): void
+	{
+		// Regression: a duplicate name replaced the earlier filter, and an effect type replaced the effect.
+		$cases = [
+			'a name twice' => [['filters' => [['name' => 'a', 'type' => 'Resize'], ['name' => 'a', 'type' => 'Negate']]], 'imagerfilterfactory_duplicate_name', TConfigurationException::class],
+			'a name of a key' => [['filters' => ['a' => ['type' => 'Resize'], ['name' => 'a', 'type' => 'Negate']]], 'imagerfilterfactory_duplicate_name', TConfigurationException::class],
+			'a name before a numbered name' => [['filters' => [['name' => 'filter0', 'type' => 'Resize'], ['type' => 'Negate']]], 'imagerfilterfactory_duplicate_name', TConfigurationException::class],
+			'a name after a numbered name' => [['filters' => [['type' => 'Resize'], ['name' => 'filter0', 'type' => 'Negate']]], 'imagerfilterfactory_duplicate_name', TConfigurationException::class],
+			'an effect of another type' => [['filters' => [['type' => 'Grayscale', 'effect' => 'Negate']]], 'imagerfilterfactory_type_conflict', TInvalidDataValueException::class],
+			'an effect number of another type' => [['filters' => [['type' => 'Grayscale', 'Effect' => (string) IMG_FILTER_NEGATE]]], 'imagerfilterfactory_type_conflict', TInvalidDataValueException::class],
+		];
+		foreach ($cases as $case => [$config, $code, $exception]) {
+			try {
+				TImagerFilterFactory::parse($config);
+				self::fail("$case: $code was expected.");
+			} catch (\Exception $e) {
+				self::assertInstanceOf($exception, $e, $case);
+				self::assertSame($code, $e->getErrorCode(), $case);
+			}
+		}
+		try {
+			TImagerFilterFactory::parse(static::xml('<behavior><filter type="Resize" /><filter Name="xml0" type="Negate" /></behavior>'), 'xml');
+			self::fail('A duplicate XML name was expected to fail.');
+		} catch (TConfigurationException $e) {
+			self::assertSame('imagerfilterfactory_duplicate_name', $e->getErrorCode());
+		}
+
+		$config = TImagerFilterFactory::parse(['filters' => [['type' => 'Grayscale', 'effect' => ' GRAYSCALE '], ['type' => 'negate', 'effect' => (string) IMG_FILTER_NEGATE]]]);
+		self::assertSame(['effect' => 'Grayscale'], $config['filters']['filter0']['properties'], 'The same effect as the type is no conflict.');
+		self::assertSame(['effect' => 'negate'], $config['filters']['filter1']['properties'], 'The number of the effect of the type is no conflict.');
 	}
 
 	public function testCreateFilter(): void

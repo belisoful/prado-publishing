@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
@@ -237,6 +237,38 @@ class TAssetVirtualizeTest extends PublishingTestCase
 
 		self::assertSame($real, $asset->getAssetOriginalFilePath());
 		self::assertSame($this->srcDir . '/icons/icon.txt', $asset->getAssetFilePath(), 'The re-virtualization need not match the virtual path.');
+	}
+
+	public function testOnlyTheFirstMatchIsReplaced(): void
+	{
+		$this->writeSource('realpath/app/realpath/x.png', 'inner');
+		$wanted = $this->writeSource('realpath/app/userIcons/x.png', 'wanted');
+		$asset = $this->virtualAsset($this->srcDir . '/userIcons/app/userIcons/x.png', [
+			'class' => TAssetVirtualize::class,
+			'VirtualFiles' => '/\/userIcons\//i',
+			'MapFromVirtual' => '/realpath/',
+			'OriginalFiles' => '/\/realpath\//i',
+			'MapToVirtual' => '/icons/',
+		]);
+
+		self::assertSame($wanted, $asset->getAssetOriginalFilePath(), 'A later folder of the same name is not mapped.');
+		self::assertSame($this->srcDir . '/icons/app/userIcons/x.png', $asset->getAssetFilePath());
+	}
+
+	public function testTheDocumentedFolderExample(): void
+	{
+		$real = $this->writeSource('assets/realpath/userIcons/icon.png', 'icon');
+		$this->writeSource('assets/realpath/realpath/icon.png', 'other');
+		$asset = $this->virtualAsset($this->srcDir . '/assets/userIcons/userIcons/icon.png', [
+			'class' => TAssetVirtualize::class,
+			'VirtualFiles' => '/^(.*\/assets)\/userIcons\//i',
+			'MapFromVirtual' => '${1}/realpath/',
+			'OriginalFiles' => '/^(.*\/assets)\/realpath\//i',
+			'MapToVirtual' => '${1}/icons/',
+		]);
+
+		self::assertSame($real, $asset->getAssetOriginalFilePath());
+		self::assertSame($this->srcDir . '/assets/icons/userIcons/icon.png', $asset->getAssetFilePath());
 	}
 
 	public function testVirtualDirectory(): void

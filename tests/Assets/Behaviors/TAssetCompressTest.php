@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
@@ -21,7 +21,6 @@ use Prado\IO\Compression\TXzCompressor;
 use Prado\IO\Compression\TZlibCompressor;
 use Prado\IO\Compression\TZstdCompressor;
 use Prado\TComponent;
-use Prado\Util\TCallChain;
 use Prado\Web\Assets\Behaviors\TAssetCompress;
 use Prado\Web\Assets\Behaviors\TAssetGZCompress;
 use Prado\Web\Assets\TAsset;
@@ -411,8 +410,7 @@ class TAssetCompressTest extends PublishingTestCase
 	{
 		$compress = new TAssetCompress();
 		$compress->setMethod('deflate');
-		$compress->setMatchFiles('/\.zz$/i');
-		$compress->dySetAssetFilePathPre('/a/app.js.ZZ', new TCallChain('dySetAssetFilePathPre'));
+		$compress->setMatchFiles('/\.(zz|css)$/i');
 
 		self::assertSame('/a/app.js.ZZ', $compress->dyAlterAssetFilePath('/a/app.js.ZZ'), 'The extension compares case-insensitively.');
 		self::assertSame('/a/app.js.zz', $compress->dyAlterAssetFilePath('/a/app.js.zz'));
@@ -427,11 +425,22 @@ class TAssetCompressTest extends PublishingTestCase
 
 	public function testAlterSkipsAnUnmatchedPath(): void
 	{
-		$compress = new TAssetCompress();
-		$compress->setMatchFiles('/\.js$/');
-		$compress->dySetAssetFilePathPre('/a/site.css', new TCallChain('dySetAssetFilePathPre'));
+		$asset = $this->compressAsset($css = $this->writeSource('site.css'), ['MatchFiles' => '/\.js$/']);
 
-		self::assertSame('/a/app.js', $compress->dyAlterAssetFilePath('/a/app.js'), 'Only the matched path state applies.');
+		self::assertSame($this->srcDir . '/app.js', $asset->asa('compress')->dyAlterAssetFilePath($this->srcDir . '/app.js'), 'The owner asset file path is matched, not the given path.');
+		self::assertSame($css, $asset->getAssetPublishFilePath());
+	}
+
+	public function testMatchFilesMatchesTheVirtualFilePath(): void
+	{
+		$source = $this->writeSource('app.js', self::CONTENT);
+		$virtual = new TFileAsset($source, $this->srcDir . '/app.min.js');
+		$virtual->attachBehavior('compress', ['class' => TAssetCompress::class, 'MatchFiles' => '/\.min\.js$/']);
+		$plain = new TFileAsset($this->srcDir . '/app.js');
+		$plain->attachBehavior('compress', ['class' => TAssetCompress::class, 'MatchFiles' => '/\.min\.js$/']);
+
+		self::assertSame($this->srcDir . '/app.min.js.gz', $virtual->getAssetPublishFilePath(), 'The virtual path is matched, not the source path.');
+		self::assertSame($source, $plain->getAssetPublishFilePath(), 'The source path alone does not match.');
 	}
 
 	public function testAddFinalizer(): void
@@ -558,7 +567,6 @@ class TAssetCompressTest extends PublishingTestCase
 		$compress = new TAssetCompress();
 		$compress->setMethod('br');
 		$compress->setMatchFiles('/\.js$/');
-		$compress->dySetAssetFilePathPre('/a/app.js', new TCallChain('dySetAssetFilePathPre'));
 		file_put_contents($dst = $this->assetDir . '/out.br', self::CONTENT);
 
 		try {

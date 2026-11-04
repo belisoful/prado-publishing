@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors\Filters;
@@ -64,7 +64,9 @@ class TResizeImagerFilterTest extends PublishingTestCase
 
 		self::assertSame(0.0, $filter->getMaximumWidth());
 		self::assertSame(0.0, $filter->getMaximumHeight());
-		self::assertSame(0, $filter->getMaximumPixels());
+		self::assertSame('0', $filter->getMaximumPixels());
+		self::assertSame(0, $filter->getMaximumPixelCount());
+		self::assertSame(TResizeImagerFilter::DEFAULT_MAXIMUM_OUTPUT_PIXELS, $filter->getMaximumOutputPixels());
 		self::assertSame(0.0, $filter->getFixedWidth());
 		self::assertSame(0.0, $filter->getFixedHeight());
 		self::assertTrue($filter->getCropFill());
@@ -86,18 +88,58 @@ class TResizeImagerFilterTest extends PublishingTestCase
 	public function testMaximumPixels(): void
 	{
 		$filter = new TResizeImagerFilter();
-		$cases = ['1000' => 1000000, '1920x1080' => 2073600, ' 1920 X 1080 ' => 2073600, '1920×1080' => 2073600, '10*5' => 50, '10.5' => 110, '' => 0, '-5' => 0];
-		foreach ($cases as $value => $expected) {
+		$cases = [
+			'1000' => ['1000', 1000000],
+			'1920x1080' => ['1920x1080', 2073600],
+			' 1920 X 1080 ' => ['1920x1080', 2073600],
+			'1920×1080' => ['1920x1080', 2073600],
+			'10*5' => ['10x5', 50],
+			'10.5' => ['10.5', 110],
+			'30x30' => ['30', 900],
+			'1e3' => ['1000', 1000000],
+			'' => ['0', 0],
+			'-5' => ['0', 0],
+			'0x1080' => ['0', 0],
+		];
+		foreach ($cases as $value => [$expected, $count]) {
 			$filter->setMaximumPixels((string) $value);
 			self::assertSame($expected, $filter->getMaximumPixels(), "MaximumPixels '$value'.");
+			self::assertSame($count, $filter->getMaximumPixelCount(), "MaximumPixels '$value' count.");
 		}
 		$filter->setMaximumPixels(100);
-		self::assertSame(10000, $filter->getMaximumPixels());
+		self::assertSame('100', $filter->getMaximumPixels());
+		self::assertSame(10000, $filter->getMaximumPixelCount());
+	}
+
+	public function testMaximumPixelsRoundTrips(): void
+	{
+		// Regression: the pixel count read back was squared when it was set again.
+		foreach (['1000', '1920x1080', '10.5', '0.1x3', '1.0E+20', 4e9, '100000x100000000000000'] as $value) {
+			$filter = new TResizeImagerFilter();
+			$filter->setMaximumPixels($value);
+			$copy = new TResizeImagerFilter();
+			$copy->setMaximumPixels($filter->getMaximumPixels());
+			self::assertSame($filter->getMaximumPixels(), $copy->getMaximumPixels(), "MaximumPixels '$value'.");
+			self::assertSame($filter->getMaximumPixelCount(), $copy->getMaximumPixelCount(), "MaximumPixels '$value' count.");
+		}
+	}
+
+	public function testALargeMaximumPixelsDoesNotOverflow(): void
+	{
+		// Regression: a large value overflowed to a negative count and resized to 1x1.
+		foreach ([4e9, '100000x100000000000000'] as $value) {
+			$filter = static::newFilter(['MaximumPixels' => $value]);
+			self::assertSame(PHP_INT_MAX, $filter->getMaximumPixelCount(), "MaximumPixels '$value'.");
+			$image = static::createImage(64, 48);
+			self::assertFalse($filter->filterImage($image), 'An image within the maximum is not resized.');
+			self::assertSame([64, 48], [imagesx($image), imagesy($image)]);
+		}
 	}
 
 	public function testBadMaximumPixels(): void
 	{
-		foreach (['big', '10x20x30', '10 by 20'] as $value) {
+		// Regression: '1920x' had an empty factor and silently disabled the maximum.
+		foreach (['big', '10x20x30', '10 by 20', '1920x', 'x1080', '1920x ', 'INF', '1e999', '1e999x2', NAN, INF] as $value) {
 			try {
 				(new TResizeImagerFilter())->setMaximumPixels($value);
 				self::fail("An exception was expected for '$value'.");
@@ -231,7 +273,7 @@ class TResizeImagerFilterTest extends PublishingTestCase
 	public function testAFailedScaleKeepsTheImage(): void
 	{
 		// 65536 * 65536 pixels exceeds INT_MAX, so GD cannot create the scaled image.
-		$filter = static::newFilter(['FixedWidth' => 65536, 'FixedHeight' => 65536]);
+		$filter = static::newFilter(['FixedWidth' => 65536, 'FixedHeight' => 65536, 'MaximumOutputPixels' => 0]);
 		$image = $original = static::createImage();
 		$warnings = [];
 		set_error_handler(static function (int $errno, string $errstr) use (&$warnings): bool {
@@ -298,6 +340,41 @@ class TResizeImagerFilterTest extends PublishingTestCase
 		self::assertSame([40, 20], [$image->getImageWidth(), $image->getImageHeight()]);
 		static::resizeImagick(['MaximumWidth' => 50, 'MaximumHeight' => 20, 'MaximumPixels' => 800], 40, 20, false);
 		static::resizeImagick(['FixedWidth' => 40, 'FixedHeight' => 20], 40, 20, false);
+	}
+
+	public function testTheOutputSizeIsLimited(): void
+	{
+		// Regression: a FixedWidth of 20000 made a 20000x20000 image.
+		$images = ['GD' => static::createImage(64, 64)];
+		if (TImageGraphics::hasImagick()) {
+			$images['Imagick'] = static::createImagick(64, 64);
+		}
+		foreach ($images as $library => $image) {
+			$original = $image;
+			try {
+				static::newFilter(['FixedWidth' => 20000])->filterImage($image);
+				self::fail("$library: an exception was expected.");
+			} catch (TInvalidDataValueException $e) {
+				self::assertSame('imagerfilter_output_too_large', $e->getErrorCode());
+			}
+			self::assertSame($original, $image, "$library: the image is not replaced.");
+		}
+
+		$image = static::createImage(40, 20);
+		try {
+			static::newFilter(['FixedWidth' => 30, 'MaximumOutputPixels' => 400])->filterImage($image);
+			self::fail('An exception was expected.');
+		} catch (TInvalidDataValueException $e) {
+			self::assertSame('imagerfilter_output_too_large', $e->getErrorCode());
+		}
+		self::assertTrue(static::newFilter(['FixedWidth' => 30, 'MaximumOutputPixels' => 450])->filterImage($image), 'A size at the limit is made.');
+		self::assertSame([30, 15], [imagesx($image), imagesy($image)]);
+
+		$filter = static::newFilter(['FixedWidth' => 80, 'MaximumOutputPixels' => '-1']);
+		self::assertSame(0, $filter->getMaximumOutputPixels(), 'A negative limit is none.');
+		$image = static::createImage(40, 20);
+		self::assertTrue($filter->filterImage($image), 'A limit of 0 is none.');
+		self::assertSame([80, 40], [imagesx($image), imagesy($image)]);
 	}
 
 	public function testImagickMaximumSizes(): void

@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors\Filters;
@@ -69,8 +69,11 @@ class TResizeImagerFilter extends TBaseImagerFilter
 	/** @var float The maximum height allowed, default 0 for no maximum. */
 	private float $_maximumHeight = 0.0;
 
-	/** @var int The maximum pixels allowed, default 0 for no maximum. */
-	private int $_maximumPixels = 0;
+	/** @var float The width of the maximum pixels, default 0 for no maximum. */
+	private float $_maximumPixelsWidth = 0.0;
+
+	/** @var float The height of the maximum pixels, default 0 for no maximum. */
+	private float $_maximumPixelsHeight = 0.0;
 
 	/** @var float The fixed width, default 0 for no fixed width. */
 	private float $_fixedWidth = 0.0;
@@ -117,33 +120,70 @@ class TResizeImagerFilter extends TBaseImagerFilter
 	}
 
 	/**
-	 * @return int Maximum pixels, default 0 for none.
+	 * The maximum pixels in the form {@see setMaximumPixels} reads: one number, the size
+	 * of both dimensions, when the width and height are equal, and "width x height"
+	 * otherwise.  Setting the value read gives the same maximum.
+	 * @return string Maximum pixels, default "0" for none.
 	 */
-	public function getMaximumPixels(): int
+	public function getMaximumPixels(): string
 	{
-		return $this->_maximumPixels;
+		$width = $this->_maximumPixelsWidth;
+		$height = $this->_maximumPixelsHeight;
+		if (!$width || !$height) {
+			return '0';
+		}
+		if ($width === $height) {
+			return static::formatPixels($width);
+		}
+		return static::formatPixels($width) . 'x' . static::formatPixels($height);
 	}
 
 	/**
-	 * This can specify an integer number of pixels in both dimensions (eg.
-	 * "1000") or pixels dimensions in the format of eg. "1920x1080", "1920×1080",
-	 * or "1920*1080".
+	 * @return int The number of pixels of {@see getMaximumPixels MaximumPixels}, 0 for none,
+	 *   and PHP_INT_MAX when the product is beyond the integer range.
+	 */
+	public function getMaximumPixelCount(): int
+	{
+		$pixels = floor($this->_maximumPixelsWidth * $this->_maximumPixelsHeight);
+		return $pixels >= PHP_INT_MAX ? PHP_INT_MAX : (int) $pixels;
+	}
+
+	/**
+	 * This can specify a number of pixels in both dimensions (eg. "1000" for 1000 x 1000
+	 * pixels) or pixels dimensions in the format of eg. "1920x1080", "1920×1080", or
+	 * "1920*1080".  Each number is finite; a negative number is 0, and a 0 dimension
+	 * is no maximum.  An empty value is no maximum.
 	 * @param numeric|string $value the maximum pixels
-	 * @throws TInvalidDataValueException when the format is invalid.
+	 * @throws TInvalidDataValueException when the format is invalid or a number is not finite.
 	 */
 	public function setMaximumPixels($value)
 	{
-		$matches = [1 => $value];
-		if (is_string($value) && !empty($value) && !preg_match('/^\s*([-\d\.]+)\s*(?:(?:x|\*|×)\s*([-\d\.]*)\s*)?$/iu', $value, $matches)) {
+		$number = '[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?';
+		if (is_int($value) || is_float($value)) {
+			$width = $height = (float) $value;
+		} elseif (($value = trim(TPropertyValue::ensureString($value))) === '') {
+			$width = $height = 0.0;
+		} elseif (preg_match('/^(' . $number . ')\s*(?:(?:x|\*|×)\s*(' . $number . '))?$/iu', $value, $matches)) {
+			$width = (float) $matches[1];
+			$height = isset($matches[2]) ? (float) $matches[2] : $width;
+		} else {
 			throw new TInvalidDataValueException('resizeimagerfilter_bad_max_pixel_format', $value);
 		}
-		$pixels = max(0.0, TPropertyValue::ensureFloat($matches[1]));
-		if (isset($matches[2])) {
-			$pixels *= max(0.0, TPropertyValue::ensureFloat($matches[2]));
-		} else {
-			$pixels *= $pixels;
+		if (!is_finite($width) || !is_finite($height)) {
+			throw new TInvalidDataValueException('resizeimagerfilter_bad_max_pixel_format', (string) $value);
 		}
-		$this->_maximumPixels = (int) floor($pixels);
+		$this->_maximumPixelsWidth = max(0.0, $width);
+		$this->_maximumPixelsHeight = max(0.0, $height);
+	}
+
+	/**
+	 * @param float $value a dimension of the maximum pixels.
+	 * @return string the dimension in a form {@see setMaximumPixels} reads back exactly.
+	 */
+	protected static function formatPixels(float $value): string
+	{
+		$text = var_export($value, true); // The shortest form that reads back as the same float.
+		return str_ends_with($text, '.0') ? substr($text, 0, -2) : $text;
 	}
 
 	/**
@@ -305,59 +345,6 @@ class TResizeImagerFilter extends TBaseImagerFilter
 	}
 
 	/**
-	 * The Imagick resampling filter of a GD interpolation mode, from {@see
-	 * imagickScaleModes}.  A GD mode that Imagick has no filter for resamples with the
-	 * triangle filter, the Imagick equal of the default IMG_BILINEAR_FIXED.
-	 *
-	 * @param int $mode The GD interpolation mode, eg. IMG_BILINEAR_FIXED.
-	 * @return int The Imagick FILTER_* resampling filter.
-	 */
-	protected static function imagickScaleMode(int $mode): int
-	{
-		return static::imagickScaleModes()[$mode] ?? \Imagick::FILTER_TRIANGLE;
-	}
-
-	/**
-	 * The Imagick resampling filter of each GD interpolation mode of {@see
-	 * TInterpolationImagerMode}, for {@see imagickScaleMode}.  The nearest Imagick filter
-	 * is used where the two libraries name the same filter differently: the GD bilinear
-	 * interpolations are the Imagick triangle filter, the GD bicubic interpolations are the
-	 * Imagick Catmull-Rom filter, the GD bell is the Imagick quadratic filter, and the GD
-	 * (B-)spline cubics are the Imagick cubic filter, the cubic B-spline.  A mode without an
-	 * Imagick equal, such as IMG_POWER, is not in the map and resamples with the default of
-	 * {@see imagickScaleMode}.
-	 *
-	 * The map is built when it is used, rather than held in a class constant, so that
-	 * nothing evaluates the `\Imagick::FILTER_*` constants on a host without the extension.
-	 *
-	 * @return array<int, int> The Imagick FILTER_* filter of each GD IMG_* mode.
-	 */
-	protected static function imagickScaleModes(): array
-	{
-		return [
-			IMG_NEAREST_NEIGHBOUR => \Imagick::FILTER_POINT,
-			IMG_BILINEAR_FIXED => \Imagick::FILTER_TRIANGLE,
-			IMG_TRIANGLE => \Imagick::FILTER_TRIANGLE,
-			IMG_BICUBIC => \Imagick::FILTER_CATROM,
-			IMG_BICUBIC_FIXED => \Imagick::FILTER_CATROM,
-			IMG_CATMULLROM => \Imagick::FILTER_CATROM,
-			IMG_BELL => \Imagick::FILTER_QUADRATIC,
-			IMG_BESSEL => \Imagick::FILTER_BESSEL,
-			IMG_BLACKMAN => \Imagick::FILTER_BLACKMAN,
-			IMG_BOX => \Imagick::FILTER_BOX,
-			IMG_BSPLINE => \Imagick::FILTER_CUBIC,
-			IMG_GAUSSIAN => \Imagick::FILTER_GAUSSIAN,
-			IMG_GENERALIZED_CUBIC => \Imagick::FILTER_CUBIC,
-			IMG_HAMMING => \Imagick::FILTER_HAMMING,
-			IMG_HANNING => \Imagick::FILTER_HANNING,
-			IMG_HERMITE => \Imagick::FILTER_HERMITE,
-			IMG_MITCHELL => \Imagick::FILTER_MITCHELL,
-			IMG_QUADRATIC => \Imagick::FILTER_QUADRATIC,
-			IMG_SINC => \Imagick::FILTER_SINC,
-		];
-	}
-
-	/**
 	 * Computes the size the image is resized to, and the rectangle cropped from it first,
 	 * from {@see getMaximumWidth MaximumWidth}, {@see getMaximumHeight MaximumHeight},
 	 * {@see getFixedWidth FixedWidth}, {@see getFixedHeight FixedHeight}, {@see
@@ -367,10 +354,13 @@ class TResizeImagerFilter extends TBaseImagerFilter
 	 * The Fixed sizes are applied first, cropping the center of the image when both are
 	 * specified with CropFill, then the Maximum sizes, then MaximumPixels.  The resulting
 	 * dimensions are at least 1 pixel, and equal the source size when the image is not
-	 * resized.
+	 * resized.  A new size is checked against {@see getMaximumOutputPixels
+	 * MaximumOutputPixels}.
 	 *
 	 * @param int $sx The source width.
 	 * @param int $sy The source height.
+	 * @throws TInvalidDataValueException when the new size has more
+	 *   pixels than MaximumOutputPixels.
 	 * @return array{width: int, height: int, crop: null|array{x: int, y: int, width: int, height: int}}
 	 *   The new size, and the rectangle to crop before scaling or null to scale the whole
 	 *   image.
@@ -419,10 +409,13 @@ class TResizeImagerFilter extends TBaseImagerFilter
 			$dy = $my;
 		}
 
-		if (($mp = $this->getMaximumPixels()) && ($dp = $dx * $dy) > $mp) {
+		if (($mp = $this->getMaximumPixelCount()) && ($dp = $dx * $dy) > $mp) {
 			$s = sqrt($mp / $dp);
 			$dx = $dx * $s;
 			$dy = $dy * $s;
+		}
+		if (floor($dx) != $sx || floor($dy) != $sy) {
+			$this->ensureOutputSize(max(1.0, floor($dx)), max(1.0, floor($dy)));
 		}
 		$dstW = max(1, (int) floor($dx));
 		$dstH = max(1, (int) floor($dy));

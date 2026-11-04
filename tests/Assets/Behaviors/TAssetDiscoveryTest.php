@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
@@ -99,6 +99,15 @@ class TAssetDiscoveryTest extends PublishingTestCase
 
 		self::assertSame(TGeneratedAsset::class, $param->getClass());
 		self::assertSame('/db/structure/a/file.db', $param->getFilePath());
+	}
+
+	public function testOnlyTheFirstMatchIsReplaced(): void
+	{
+		$param = new TAssetDiscoverClassEventParameter(TFileAsset::class, '/dbFiles/a/dbFiles/file.db');
+
+		static::discovery(['MatchFiles' => '/\/dbFiles\//', 'MatchReplacement' => '/db/', 'RoutedClass' => TGeneratedAsset::class])->discoverClass(null, $param);
+
+		self::assertSame('/db/a/dbFiles/file.db', $param->getFilePath());
 	}
 
 	public function testANonMatchingPathIsNotRouted(): void

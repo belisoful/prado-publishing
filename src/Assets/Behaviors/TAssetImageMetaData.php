@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -21,11 +21,14 @@ use Prado\IO\Image\Meta\TJFIFFormat;
 use Prado\IO\Image\Meta\TJFXX;
 use Prado\IO\Image\Meta\TXMP;
 use Prado\IO\Image\TIFF\TTIFFDataType;
+use Prado\IO\Image\TIFF\TTIFFIfd;
+use Prado\IO\Image\TIFF\TTIFFTag;
 use Prado\IO\Image\TImageFile;
 use Prado\IO\Image\TImageGraphics;
 use Prado\IO\Image\TImageGraphicsMode;
 use Prado\IO\Image\TJPEG;
 use Prado\IO\Image\TPrivacyCategory;
+use Prado\IO\Image\TTIFF;
 use Prado\TComponent;
 use Prado\TPropertyValue;
 use Prado\Web\Assets\Behaviors\Filters\TBaseImagerFilter;
@@ -51,6 +54,14 @@ use Prado\Web\Assets\Behaviors\Filters\TInterpolationImagerMode;
  *   `IPTC`, `XMP`, `Color` (the ICC profile), `All` (default), or `None`.
  * - {@see getScrub Scrub} removes identifying information by
  *   {@see \Prado\IO\Image\TPrivacyCategory} (e.g. "Location, Author" or "All").
+ *   Scrubbing Author also removes the XMP face and person regions, which name the
+ *   people in the image.
+ * - When metadata is removed ({@see getRemovesMetaData RemovesMetaData}), the data a
+ *   JPEG or GIF carries after its end marker is dropped, such as the secondary images
+ *   of a JPEG Multi-Picture Format file or the video of a motion photo, along with the
+ *   JPEG MPF index segment.
+ * - MetaDataPreserve `None` also removes the JPEG comment, the PNG text chunks, and the
+ *   GIF comments.
  * - The dimensions recorded in EXIF and IPTC follow a resized image, and a stale EXIF
  *   thumbnail is regenerated.
  * - A JPEG gets the JFIF header and thumbnail selected by {@see getJFIFMode JFIFMode}.
@@ -58,7 +69,9 @@ use Prado\Web\Assets\Behaviors\Filters\TInterpolationImagerMode;
  *
  * A carrier the published format has no place for is dropped: GIF has no EXIF, and
  * GIF and WebP have no IPTC. A format prado-image does not read (BMP, WBMP, XBM)
- * publishes without metadata.
+ * publishes without metadata. A TIFF is its own EXIF structure, so its EXIF is written
+ * as the tags of its first image directory: the tags that describe the raster stay, and
+ * the other tags are replaced by the kept EXIF.
  *
  * ```xml
  * <behavior name="photos" Class="Prado\Web\Assets\Behaviors\TAssetJPEGize"
@@ -76,6 +89,27 @@ class TAssetImageMetaData extends TComponent
 {
 	/** The EXIF IFD0 Orientation tag. */
 	public const ORIENTATION_TAG = 274;
+
+	/**
+	 * The TIFF IFD0 tags that describe the raster, its layout, and the carriers written
+	 * on their own (XMP, IPTC, and the ICC profile). The other IFD0 tags of a TIFF are its
+	 * EXIF metadata.
+	 */
+	public const TIFF_IMAGE_TAGS = [
+		254, 255, 256, 257, 258, 259, 262, 263, 264, 265, 266, 273, 277, 278, 279, 280,
+		281, 284, 290, 291, 317, 318, 319, 320, 321, 322, 323, 324, 325, 330, 338, 339,
+		340, 341, 513, 514, 529, 530, 531, 532, 700, 33723, 34675,
+	];
+
+	/**
+	 * The XMP properties of the regions of the image that name people, as [namespace,
+	 * property] pairs: the Metadata Working Group regions and the Microsoft Photo regions.
+	 * A Scrub of {@see TPrivacyCategory::Author} removes them.
+	 */
+	public const FACE_REGION_PROPERTIES = [
+		['http://www.metadataworkinggroup.com/schemas/regions/', 'Regions'],
+		['http://ns.microsoft.com/photo/1.2/', 'RegionInfo'],
+	];
 
 	/** @var ?string the image file the metadata is read from. */
 	private ?string $_filePath = null;
@@ -193,6 +227,27 @@ class TAssetImageMetaData extends TComponent
 			return false;
 		}
 		return in_array(TAssetImageMetaDataMode::All, $this->_preserve, true) || in_array($mode, $this->_preserve, true);
+	}
+
+	/**
+	 * @return bool whether {@see getMetaDataPreserve MetaDataPreserve} keeps everything,
+	 *   which is "All" without "None".
+	 */
+	public function getPreservesAll(): bool
+	{
+		return in_array(TAssetImageMetaDataMode::All, $this->_preserve, true) && !in_array(TAssetImageMetaDataMode::None, $this->_preserve, true);
+	}
+
+	/**
+	 * Writing removes metadata when a {@see getScrub Scrub} is set or
+	 * {@see getMetaDataPreserve MetaDataPreserve} is not "All". Then the data after the
+	 * end marker of a JPEG or GIF is dropped, and a failure to write the metadata throws
+	 * rather than publish the image with the metadata it was to remove.
+	 * @return bool whether writing removes metadata.
+	 */
+	public function getRemovesMetaData(): bool
+	{
+		return $this->_scrub !== 0 || !$this->getPreservesAll();
 	}
 
 	/**
@@ -435,6 +490,15 @@ class TAssetImageMetaData extends TComponent
 	}
 
 	/**
+	 * @return ?array{0:int, 1:int} the width and height the source image declares, read
+	 *   without decoding it, or null when it is not an image.
+	 */
+	public function getImageSize(): ?array
+	{
+		return $this->getImageType() === false ? null : [(int) $this->_info[0], (int) $this->_info[1]];
+	}
+
+	/**
 	 * @return ?TImageFile the prado-image container of the source, or null when the
 	 *   source is missing or in a format prado-image does not read.
 	 */
@@ -619,8 +683,9 @@ class TAssetImageMetaData extends TComponent
 
 	/**
 	 * @return bool whether writing the metadata would change a file whose pixels did not
-	 *   change: a carrier was edited, a carrier is dropped, privacy is scrubbed, or the
-	 *   IPTC character set is rewritten.
+	 *   change: a carrier was edited, a carrier is dropped, privacy is scrubbed, the IPTC
+	 *   character set is rewritten, or metadata is removed from a source that has data
+	 *   after its end marker, a JPEG MPF index, or, for "None", a comment or text chunk.
 	 */
 	public function getNeedsWrite(): bool
 	{
@@ -632,7 +697,31 @@ class TAssetImageMetaData extends TComponent
 				return true;
 			}
 		}
-		return false;
+		return $this->getRemovesMetaData() && $this->hasRemovableData();
+	}
+
+	/**
+	 * Whether the source has data that removing metadata drops, beyond the carriers: data
+	 * after the end marker of a JPEG or GIF, a JPEG MPF index, and, when
+	 * {@see getMetaDataPreserve MetaDataPreserve} is "None", the comments and text chunks.
+	 * @return bool whether the source has removable data.
+	 */
+	protected function hasRemovableData(): bool
+	{
+		if ($this->_filePath === null || ($bytes = @file_get_contents($this->_filePath)) === false) {
+			return false;
+		}
+		if (static::removeTrailingData($bytes) !== $bytes) {
+			return true;
+		}
+		if (!in_array(TAssetImageMetaDataMode::None, $this->_preserve, true)) {
+			return false;
+		}
+		try {
+			return TImageFile::fromString($bytes)->clearPrivateData(TPrivacyCategory::All) > 0;
+		} catch (\Exception $e) {
+			return false;
+		}
 	}
 
 	/**
@@ -886,11 +975,13 @@ class TAssetImageMetaData extends TComponent
 	/**
 	 * Writes the metadata into an encoded image, so the published file is written once
 	 * rather than written by the imager and rewritten here. The kept carriers are written
-	 * into the bytes as {@see writeMetaData} writes them into a file; bytes of a format
-	 * prado-image does not read are returned unchanged.
+	 * into the bytes as {@see writeMetaData} writes them into a file. Bytes prado-image
+	 * cannot read or write are returned unchanged, unless metadata is removed
+	 * ({@see getRemovesMetaData}), when the failure throws.
 	 * @param string $bytes the encoded image.
 	 * @param null|\GdImage|\Imagick $image the published image, for its dimensions and thumbnails.
 	 * @param bool $pixelsChanged whether the pixels differ from the source.
+	 * @throws TIOException when metadata is removed and it cannot be written.
 	 * @return string the encoded image with the metadata written into it.
 	 */
 	public function writeImageBytes(string $bytes, $image = null, bool $pixelsChanged = true): string
@@ -898,10 +989,134 @@ class TAssetImageMetaData extends TComponent
 		try {
 			$target = TImageFile::fromString($bytes);
 			$this->applyTo($target, $image, $pixelsChanged);
-			return $target->toBinary();
+			return $this->finishBytes($target->toBinary());
 		} catch (\Exception $e) {
+			if ($this->getRemovesMetaData()) {
+				throw new TIOException('metadata_write_failed', (string) $this->_filePath, $e->getMessage());
+			}
 			return $bytes; // The format carries no metadata, or it cannot be written.
 		}
+	}
+
+	/**
+	 * Drops the data after the end marker of a written image when metadata is removed.
+	 * @param string $bytes the written image.
+	 * @return string the image to publish.
+	 */
+	protected function finishBytes(string $bytes): string
+	{
+		return $this->getRemovesMetaData() ? static::removeTrailingData($bytes) : $bytes;
+	}
+
+	/**
+	 * Removes the data a JPEG or GIF carries after its end marker, where a reader of the
+	 * image does not look: the secondary images of a JPEG Multi-Picture Format (MPF) file
+	 * and their EXIF, the video of a motion photo, or any appended file. The MPF index
+	 * segment (APP2 "MPF") that points at the secondary images is removed with them.
+	 * Other formats, and a JPEG or GIF whose end marker is not found, are returned
+	 * unchanged.
+	 * @param string $bytes the image.
+	 * @return string the image without the data after its end marker.
+	 */
+	public static function removeTrailingData(string $bytes): string
+	{
+		if (TJPEG::isJPEG($bytes)) {
+			return static::removeJpegTrailingData($bytes);
+		}
+		if (str_starts_with($bytes, 'GIF8')) {
+			return static::removeGifTrailingData($bytes);
+		}
+		return $bytes;
+	}
+
+	/**
+	 * Removes the data after the first top-level EOI of a JPEG, and its MPF segments.
+	 * @param string $bytes the JPEG.
+	 * @return string the JPEG without the data after its EOI.
+	 */
+	protected static function removeJpegTrailingData(string $bytes): string
+	{
+		$len = strlen($bytes);
+		$cuts = [];
+		$i = 2;
+		while ($i + 1 < $len) {
+			if (ord($bytes[$i]) !== 0xFF) {
+				$i++;
+				continue;
+			}
+			$marker = ord($bytes[$i + 1]);
+			if ($marker === 0xFF) {
+				$i++; // A fill byte before a marker.
+				continue;
+			}
+			if ($marker === TJPEG::EOI) {
+				$end = $i + 2;
+				$out = '';
+				$from = 0;
+				foreach ($cuts as [$start, $stop]) {
+					$out .= substr($bytes, $from, $start - $from);
+					$from = $stop;
+				}
+				return $out . substr($bytes, $from, $end - $from);
+			}
+			if (!TJPEG::markerHasLength($marker)) {
+				$i += 2;
+				continue;
+			}
+			if ($i + 3 >= $len) {
+				break;
+			}
+			$next = $i + 2 + ((ord($bytes[$i + 2]) << 8) | ord($bytes[$i + 3]));
+			if ($marker === TJPEG::APP2 && substr($bytes, $i + 4, 4) === "MPF\0") {
+				$cuts[] = [$i, min($next, $len)];
+			}
+			$i = $next;
+			if ($marker === TJPEG::SOS) {
+				// The entropy-coded data runs to the next marker that is not a stuffed
+				// zero byte or a restart marker.
+				while ($i + 1 < $len && (ord($bytes[$i]) !== 0xFF || ($m = ord($bytes[$i + 1])) === 0x00 || ($m >= 0xD0 && $m <= 0xD7))) {
+					$i++;
+				}
+			}
+		}
+		return $bytes;
+	}
+
+	/**
+	 * Removes the data after the trailer of a GIF.
+	 * @param string $bytes the GIF.
+	 * @return string the GIF without the data after its trailer.
+	 */
+	protected static function removeGifTrailingData(string $bytes): string
+	{
+		$len = strlen($bytes);
+		if ($len < 13) {
+			return $bytes;
+		}
+		$packed = ord($bytes[10]);
+		$i = 13 + (($packed & 0x80) ? 3 * (2 << ($packed & 0x07)) : 0);
+		while ($i < $len) {
+			$block = ord($bytes[$i]);
+			if ($block === 0x3B) {
+				return substr($bytes, 0, $i + 1);
+			}
+			if ($block === 0x21) {
+				$i += 2;
+			} elseif ($block === 0x2C) {
+				if ($i + 10 > $len) {
+					break;
+				}
+				$packed = ord($bytes[$i + 9]);
+				$i += 10 + (($packed & 0x80) ? 3 * (2 << ($packed & 0x07)) : 0) + 1;
+			} else {
+				break;
+			}
+			while ($i < $len && ($size = ord($bytes[$i])) !== 0) {
+				$i += $size + 1;
+			}
+			$i++;
+		}
+		return $bytes;
 	}
 
 	/**
@@ -913,17 +1128,26 @@ class TAssetImageMetaData extends TComponent
 	 * @param string $filePath the published image file.
 	 * @param null|\GdImage|\Imagick $image the published image, for its dimensions and thumbnails.
 	 * @param bool $pixelsChanged whether the pixels differ from the source.
-	 * @return bool whether the metadata was written; false when prado-image cannot read the file.
+	 * @throws TIOException when metadata is removed ({@see getRemovesMetaData}) and the
+	 *   file cannot be read or written.
+	 * @return bool whether the metadata was written; false when prado-image cannot read the
+	 *   file and no metadata is removed.
 	 */
 	public function writeMetaData(string $filePath, $image = null, bool $pixelsChanged = true): bool
 	{
 		try {
 			$target = TImageFile::fromFile($filePath);
+			$this->applyTo($target, $image, $pixelsChanged);
+			$bytes = $this->finishBytes($target->toBinary());
 		} catch (\Exception $e) {
+			if ($this->getRemovesMetaData()) {
+				throw new TIOException('metadata_write_failed', $filePath, $e->getMessage());
+			}
 			return false;
 		}
-		$this->applyTo($target, $image, $pixelsChanged);
-		$target->save($filePath);
+		if (@file_put_contents($filePath, $bytes) !== strlen($bytes)) {
+			throw new TIOException('metadata_write_failed', $filePath, 'the file cannot be written');
+		}
 		return true;
 	}
 
@@ -941,7 +1165,11 @@ class TAssetImageMetaData extends TComponent
 		if ($exif && $pixelsChanged) {
 			$this->updateExifImage($exif, $image, $width, $height);
 		}
-		static::setCarrier(fn () => $target->setEXIF($exif));
+		if ($target instanceof TTIFF) {
+			$this->applyTiffEXIF($target, $exif);
+		} else {
+			static::setCarrier(fn () => $target->setEXIF($exif));
+		}
 
 		$xmp = $this->getIsPreserved(TAssetImageMetaDataMode::XMP) ? $this->getXMP() : null;
 		static::setCarrier(fn () => $target->setXMP($xmp));
@@ -955,12 +1183,85 @@ class TAssetImageMetaData extends TComponent
 		$icc = $this->getIsPreserved(TAssetImageMetaDataMode::Color) ? $this->getICCProfile() : null;
 		static::setCarrier(fn () => $target->setICCProfile($icc));
 
+		if (in_array(TAssetImageMetaDataMode::None, $this->_preserve, true)) {
+			// The comments, the text chunks, and the other format fields go with the carriers.
+			$target->clearPrivateData(TPrivacyCategory::All);
+		}
 		if ($target instanceof TJPEG) {
 			$this->applyJFIF($target, $image, $pixelsChanged);
 		}
 		if ($this->_scrub !== 0) {
 			$target->clearPrivateData($this->_scrub);
+			if ($this->_scrub & TPrivacyCategory::Author) {
+				$this->removeFaceRegions($target);
+			}
 		}
+	}
+
+	/**
+	 * Removes the XMP regions that name the people in the image
+	 * ({@see FACE_REGION_PROPERTIES}).
+	 * @param TImageFile $target the published image container.
+	 */
+	protected function removeFaceRegions(TImageFile $target): void
+	{
+		if (!($xmp = $target->getXMP())) {
+			return;
+		}
+		$removed = false;
+		foreach (self::FACE_REGION_PROPERTIES as [$namespace, $name]) {
+			$removed = $xmp->removeProperty($namespace, $name) || $removed;
+		}
+		if ($removed) {
+			$target->setXMP($xmp);
+		}
+	}
+
+	/**
+	 * Writes the EXIF of a TIFF, which is the TIFF structure itself and has no separate
+	 * carrier to set. The IFD0 tags other than the raster tags ({@see TIFF_IMAGE_TAGS})
+	 * are removed, and the kept EXIF's are copied in, with its EXIF, GPS, and
+	 * Interoperability directories. The other image directories of the TIFF stay.
+	 * @param TTIFF $target the published TIFF.
+	 * @param ?TEXIF $exif the kept EXIF, or null when the EXIF is not kept.
+	 */
+	protected function applyTiffEXIF(TTIFF $target, ?TEXIF $exif): void
+	{
+		if (!($ifd0 = $target->getEXIF()?->getIfd0())) {
+			return;
+		}
+		foreach (array_keys($ifd0->getTags()) as $id) {
+			if (!in_array($id, self::TIFF_IMAGE_TAGS, true)) {
+				$ifd0->removeTag($id);
+			}
+		}
+		if ($exif === null || $exif === $target->getEXIF()) {
+			return;
+		}
+		foreach ($exif->getIfd0()->getTags() as $id => $tag) {
+			if (!in_array($id, self::TIFF_IMAGE_TAGS, true)) {
+				$ifd0->setTag(static::copyTiffTag($tag));
+			}
+		}
+	}
+
+	/**
+	 * Copies a TIFF tag with its sub-directory, so the copy is written at its own offsets
+	 * and editing it leaves the original unchanged.
+	 * @param TTIFFTag $tag the tag.
+	 * @return TTIFFTag the copy.
+	 */
+	protected static function copyTiffTag(TTIFFTag $tag): TTIFFTag
+	{
+		$copy = new TTIFFTag($tag->getId(), $tag->getType(), $tag->getValues());
+		if ($sub = $tag->getSubIfd()) {
+			$ifd = new TTIFFIfd();
+			foreach ($sub->getTags() as $subTag) {
+				$ifd->setTag(static::copyTiffTag($subTag));
+			}
+			$copy->setSubIfd($ifd);
+		}
+		return $copy;
 	}
 
 	/**

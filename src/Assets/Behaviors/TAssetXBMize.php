@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -61,12 +61,16 @@ class TAssetXBMize extends TAssetImageFilter
 	 */
 	public function dyAlterAssetFilePath($filePath, $callchain = null)
 	{
-		// The file is only renamed when the image can be written in the format.
-		if (!empty($filePath) && $this->hasMatch() && $this->canEncode(IMAGETYPE_XBM)) {
-			$sep = (DIRECTORY_SEPARATOR === '/') ? '\\/' : '\\\\';
-			$filePath = preg_replace('/(?<=' . $sep . ')([^' . $sep . ']*?)(\.[^' . $sep . '\.]*)?$/i', '${1}.xbm', $filePath);
-		}
+		$filePath = $this->renameForConversion($filePath, IMAGETYPE_XBM, 'xbm');
 		return $callchain ? $callchain->dyAlterAssetFilePath($filePath) : $filePath;
+	}
+
+	/**
+	 * @return int the image type this conversion writes, IMAGETYPE_XBM.
+	 */
+	protected function getConversionType(): ?int
+	{
+		return IMAGETYPE_XBM;
 	}
 
 	/**

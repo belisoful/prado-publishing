@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors\Filters;
@@ -83,11 +83,16 @@ class TConvolutionImagerFilter extends TBaseImagerFilter
 	}
 
 	/**
-	 * @param float $value the divisor of the convolution
+	 * @param float $value the divisor of the convolution, a finite number other than 0.
+	 * @throws TInvalidDataValueException when the divisor is 0 or not finite.
 	 */
 	public function setDivisor($value)
 	{
-		$this->_divisor = TPropertyValue::ensureFloat($value);
+		$divisor = TPropertyValue::ensureFloat($value);
+		if ($divisor == 0.0 || !is_finite($divisor)) {
+			throw new TInvalidDataValueException('convolutionfilter_bad_divisor', $value);
+		}
+		$this->_divisor = $divisor;
 	}
 
 	/**

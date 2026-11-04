@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests;
@@ -339,7 +339,7 @@ class TPublishingManagerAssetsTest extends PublishingTestCase
 		self::assertEmpty(glob(dirname($this->urlToPath($url)) . '/tmp-*'), 'No temporary file is left.');
 	}
 
-	public function testNonAtomicProcessingWritesInPlace(): void
+	public function testNonAtomicProcessingWritesThroughATemporaryFile(): void
 	{
 		$this->attachClassBehavior('upper', TUppercaseAssetBehavior::class, TAsset::class);
 		$source = $this->writeSource('readme.txt', 'hello');
@@ -347,8 +347,10 @@ class TPublishingManagerAssetsTest extends PublishingTestCase
 
 		$url = $manager->publish($source);
 
-		self::assertSame([$this->urlToPath($url)], TUppercaseAssetBehavior::$processed);
+		self::assertCount(1, TUppercaseAssetBehavior::$processed);
+		self::assertStringStartsWith('tmp-', basename(TUppercaseAssetBehavior::$processed[0]), 'A processed asset is never written raw at its destination.');
 		self::assertSame('HELLO', file_get_contents($this->urlToPath($url)));
+		self::assertSame([], glob(dirname($this->urlToPath($url)) . '/tmp-*'));
 	}
 
 	public function testBlockedAssetCancelsPublishing(): void

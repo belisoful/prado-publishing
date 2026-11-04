@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -48,6 +48,11 @@ use Prado\Web\Assets\TAssetEventParameter;
  * convert them to webp format.  The second example applies the fallback
  * webp mechanism to webp images, so any last browsers that do not support
  * webp can view the images.
+ *
+ * For a browser that does not accept WebP, the image is published in the
+ * {@see getWebPFallback WebPFallback} format.  With the default "Preserve" fallback,
+ * the image keeps its format, and the filters and the `<metadata>` settings, such as
+ * a Scrub, still apply.
  *
  * WebP is pronounced “Weppy”.
  *
@@ -130,27 +135,28 @@ class TAssetWebPize extends TAssetImageFilter
 	}
 
 	/**
-	 * We match only when WebP is supported by the browser, when the Fallback mode is not Preserve,
-	 * or when the file itself is a WebP format for falling back.  WebP files don't get preserved,
-	 * but are matched for Fallback.
-	 * When matching in fallback mode, the resource can be converted into a JPEG, PNG True Color, or
-	 * PNG Palette Color image.
-	 *
-	 * @param null|string $dstFile
-	 * @param null|mixed $asset
-	 * @return null|bool does MatchFiles match AssetFilePath and possibly with
-	 *   MetaData search.
+	 * The image type a matching image is published as: WebP when the browser accepts it,
+	 * otherwise the {@see getWebPFallback WebPFallback} format. With the "Preserve"
+	 * fallback, the image is processed by the filters and the metadata settings, and
+	 * keeps its type.
+	 * @return ?int the image type, or null when the image keeps its type.
 	 */
-	public function hasMatch($dstFile = null, $asset = null)
+	protected function getConversionType(): ?int
 	{
-		if (self::browserSupportsWebP() || $this->getWebPFallback() !== TAssetWebPFallbackMode::Preserve || ($dstFile && strripos($dstFile, '.webp') === strlen($dstFile) - 5)) {
-			return parent::hasMatch($dstFile, $asset);
+		if (self::browserSupportsWebP()) {
+			return IMAGETYPE_WEBP;
 		}
-		return false;
+		return match ($this->getWebPFallback()) {
+			TAssetWebPFallbackMode::JPEG => IMAGETYPE_JPEG,
+			TAssetWebPFallbackMode::PNG, TAssetWebPFallbackMode::PNGPalette => IMAGETYPE_PNG,
+			default => null,
+		};
 	}
 
 	/**
-	 * Matched files are given the ".webp" file extension.
+	 * Matched files are given the extension of their {@see getConversionType image type}:
+	 * ".webp", or the ".jpg" or ".png" of the fallback. With the "Preserve" fallback, the
+	 * file keeps its name.
 	 *
 	 * @param null|string $filePath The file path to rewrite into a webp if its an image
 	 * @param null|\Prado\Util\TCallChain $callchain
@@ -158,49 +164,36 @@ class TAssetWebPize extends TAssetImageFilter
 	 */
 	public function dyAlterAssetFilePath($filePath, $callchain = null)
 	{
-		$webPsupported = self::browserSupportsWebP();
-		$type = IMAGETYPE_WEBP;
-		$ext = 'webp';
-		if (!$webPsupported) {
-			$fallback = $this->getWebPFallback();
-			if ($fallback === TAssetWebPFallbackMode::JPEG) {
-				$type = IMAGETYPE_JPEG;
-				$ext = 'jpg';
-			} elseif ($fallback === TAssetWebPFallbackMode::PNG || $fallback === TAssetWebPFallbackMode::PNGPalette) {
-				$type = IMAGETYPE_PNG;
-				$ext = 'png';
-			}
-		}
-		// The file is only renamed when the image can be written in the format.
-		if (!empty($filePath) && $this->hasMatch() && $this->canEncode($type)) {
-			$sep = (DIRECTORY_SEPARATOR === '/') ? '\\/' : '\\\\';
-			$filePath = preg_replace('/(?<=' . $sep . ')([^' . $sep . ']*?)(\.[^' . $sep . '\.]*)?$/i', '${1}.' . $ext, $filePath);
+		if (($type = $this->getConversionType()) !== null) {
+			$filePath = $this->renameForConversion($filePath, $type, match ($type) {
+				IMAGETYPE_JPEG => 'jpg',
+				IMAGETYPE_PNG => 'png',
+				default => 'webp',
+			});
 		}
 		return $callchain ? $callchain->dyAlterAssetFilePath($filePath) : $filePath;
 	}
 
 	/**
-	 * Changes the Image type to save the image to WebP.  This is raised
-	 * only for assets when their AssetFilePath matches MatchFiles.
+	 * Changes the Image type to save the image to WebP, or to the fallback format when the
+	 * browser does not accept WebP.  With the "Preserve" fallback, the image keeps its
+	 * type and palette.  This is raised only for assets when their AssetFilePath matches
+	 * MatchFiles.
 	 *
 	 * @param TAssetEventParameter $parentParam the publishing parameter holding the image.
 	 * @return bool whether a filter changed the image.
 	 */
 	public function applyFilters(TAssetEventParameter $parentParam): bool
-	{	//This has already matched.
-		$paletteColors = 0;
-		if (self::browserSupportsWebP()) {
-			$parentParam->setImageType(IMAGETYPE_WEBP);
-		} elseif (($fallback = $this->getWebPFallback()) == TAssetWebPFallbackMode::JPEG) {
-			$parentParam->setImageType(IMAGETYPE_JPEG);
-		} elseif ($fallback == TAssetWebPFallbackMode::PNG) {
-			$parentParam->setImageType(IMAGETYPE_PNG);
-		} elseif ($fallback == TAssetWebPFallbackMode::PNGPalette) {
-			$parentParam->setImageType(IMAGETYPE_PNG);
-			$paletteColors = $this->getWebPFallbackPNGPaletteColors();
-			$paletteColors = ($paletteColors >= 2) ? $paletteColors : 256;
+	{
+		if (($type = $this->getConversionType()) !== null) {
+			$paletteColors = 0;
+			if (!self::browserSupportsWebP() && $this->getWebPFallback() === TAssetWebPFallbackMode::PNGPalette) {
+				$paletteColors = $this->getWebPFallbackPNGPaletteColors();
+				$paletteColors = ($paletteColors >= 2) ? $paletteColors : 256;
+			}
+			$parentParam->setImageType($type);
+			$parentParam->setPaletteColors($paletteColors);
 		}
-		$parentParam->setPaletteColors($paletteColors);
 		return parent::applyFilters($parentParam);
 	}
 }

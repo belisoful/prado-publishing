@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets;
@@ -23,6 +23,7 @@ use Prado\Web\TAssetManager;
 use Prado\Web\Tests\Fixtures\TAssetPathFilterBehavior;
 use Prado\Web\Tests\Fixtures\TCopyingPublishingManager;
 use Prado\Web\Tests\Fixtures\TGeneratedAsset;
+use Prado\Web\Tests\Fixtures\TPartialFileAsset;
 use Prado\Web\Tests\Fixtures\TProbeAsset;
 use Prado\Web\Tests\Fixtures\TRecordingAssetFinalizer;
 use Prado\Web\Tests\Fixtures\TSuffixAssetBehavior;
@@ -240,6 +241,33 @@ class TAssetTest extends PublishingTestCase
 		self::assertSame(TAsset::virtualpath('/virtual/two.txt'), $asset->getAssetFilePath());
 		self::assertNull($asset->getPublishedPath());
 		self::assertNull($asset->getPublishedUrl());
+	}
+
+	public function testAssetGivenFilePathDefaultsToTheFilePath(): void
+	{
+		$asset = new TProbeAsset('/virtual/dir/../given.txt');
+		self::assertSame(TAsset::virtualpath('/virtual/given.txt'), $asset->getAssetGivenFilePath());
+
+		$asset->setAssetGivenFilePath('/virtual/link/./given.txt');
+		self::assertSame(TAsset::virtualpath('/virtual/link/given.txt'), $asset->getAssetGivenFilePath());
+		self::assertSame(TAsset::virtualpath('/virtual/given.txt'), $asset->getAssetFilePath(), 'The given path does not change the file path.');
+
+		$asset->setAssetGivenFilePath(null);
+		self::assertSame(TAsset::virtualpath('/virtual/given.txt'), $asset->getAssetGivenFilePath());
+		self::assertNull((new TProbeAsset())->getAssetGivenFilePath());
+	}
+
+	public function testSetAssetGivenFilePathResetsTheFilePathCache(): void
+	{
+		$asset = new TProbeAsset('/virtual/a.txt');
+		$filter = static::filter();
+		$asset->attachBehavior('filter', $filter);
+		$asset->getAssetFilePath();
+		$resets = $filter->resetCount;
+
+		$asset->setAssetGivenFilePath('/virtual/link.txt');
+
+		self::assertSame($resets + 1, $filter->resetCount);
 	}
 
 	public function testPublishedCaptureRoundTrips(): void
@@ -784,6 +812,15 @@ class TAssetTest extends PublishingTestCase
 
 		self::assertFalse($asset->publish($this->tempDir . '/missing/dir/a.txt'));
 		self::assertSame(0, $processed);
+	}
+
+	public function testAFailedWriteLeavesNothingAtTheDestination(): void
+	{
+		$asset = new TPartialFileAsset($this->writeSource('partial.txt', 'full content'));
+		$dst = $this->tempDir . DIRECTORY_SEPARATOR . 'partial.txt';
+
+		self::assertFalse($asset->publish($dst));
+		self::assertFileDoesNotExist($dst, 'The partial write is removed.');
 	}
 
 	public function testPublishReportsWhetherTheProcessedDestinationIsAFile(): void

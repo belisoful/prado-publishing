@@ -63,13 +63,16 @@ an `IAsset` object, each file of a published directory, and a tar archive from
    `dyAlterAssetFilePath` gives the published file name: format conversions change the
    extension, `TAssetCacheBuster` adds a fingerprint, and `TAssetCompress` appends `.gz`. The
    published location is the `TAssetManager` hashed directory of that path.
-3. **Write.** The asset writes itself, to a temporary file when publishing atomically, and
-   raises `onProcessAsset` on it. Image behaviors process the file there, and finalizers (image
-   saving, then gzip) run in priority order. The file then moves into place.
+3. **Write.** The asset writes itself to a temporary file and raises `onProcessAsset` on it.
+   Image behaviors process the file there, and finalizers (image saving, then gzip) run in
+   priority order. The file then moves into place, so a reader never sees it half processed. Only
+   an unchanged copy with `Atomic` off is written in place. A failed write publishes nothing.
 
 A directory publishes with the `TAssetManager` directory walk and completion marker (its
 `copyDirectoryFile()` hook), but each file in it publishes as its own asset, under its name with
-its behaviors' rename applied.
+its behaviors' rename applied, and with the caller's `atomic` option. A renamed file never takes
+the name of another file in its folder: when `logo.jpg` converts to PNG beside a real
+`logo.png`, it publishes as `logo.jpg.png`, and `logo.png` keeps its name.
 
 The published location comes from the `TAssetManager` hooks: `virtualAssetPath()` gives the
 asset's publish path and `copyDirectoryFile()` publishes each file of a directory. An asset
@@ -87,13 +90,16 @@ it changes itself, without resetting the asset's file path cache, would keep its
 > processing matters, such as scrubbing image metadata.
 
 A tar archive publishes as a `TTarAsset`, extracted by `TTarFileExtractor` into the directory,
-with the extractor's options on the asset. A published `IPublishedCapture` asset receives its
+with the extractor's options on the asset. An archive with a checksum file publishes to the
+`TAssetManager` directory of its folder; one without publishes to a directory of its own. An
+entry that a `TAssetBlocker` of the archive's asset would block is not extracted. A published `IPublishedCapture` asset receives its
 path and URL.
 
 With `LinkAssets`, a file is symlinked only when its asset writes the source unchanged
-(`TAsset::getIsPassThrough()`: not a converting asset such as `TGDFAsset`, and no behavior
-taking over the write), keeps its name, and has no `onProcessAsset` handlers. Any other file is
-written, because a link would serve the unprocessed source. An asset class with a processing
+(`TAsset::getIsPassThrough()`: not a converting asset such as `TGDFAsset`, no class that
+overrides the write, and no behavior taking over the write), keeps its name, and has no
+`onProcessAsset` handlers. Any other file is written, because a link would serve the unprocessed
+source, and a link published before is replaced by the file. An asset class with a processing
 behavior attached, even one that does not match the file, is therefore copied rather than
 linked.
 
@@ -128,7 +134,7 @@ The classes keep their framework namespaces, `Prado\Web` and `Prado\Web\Assets`.
 | `TAssetGZCompress` | The gzip preset of `TAssetCompress` |
 | `TAssetImagerBase` | The base imager: `MatchFiles`, `MetaMatch`, the filter configuration, and the finalizer that saves the image |
 | `TAssetImageFilter` | The general imager: runs the image filters and saves the image in its format, with the saving properties |
-| `TAssetJPEGize`, `TAssetPNGize`, `TAssetWebPize`, `TAssetGIFize`, `TAssetBMPize`, `TAssetWBMPize`, `TAssetXBMize`, `TAssetTIFFize` | Convert matching images to a format; `TAssetWebPize` follows the browser's `Accept` header, and `TAssetTIFFize` encodes with prado-image (`TiffCompression`) |
+| `TAssetJPEGize`, `TAssetPNGize`, `TAssetWebPize`, `TAssetGIFize`, `TAssetBMPize`, `TAssetWBMPize`, `TAssetXBMize`, `TAssetTIFFize` | Convert matching images to a format; `TAssetWebPize` follows the browser's `Accept` header (and still filters and scrubs an image it does not convert), and `TAssetTIFFize` encodes with prado-image (`TiffCompression`) |
 | `TAssetImageMetaData` | The image metadata, configured by `<metadata>` and shared with the filters through the publishing parameter |
 | `IBaseImager` | The imager contract: the filters and running them |
 | `IAssetMatching`, `IAssetReplacement`, `IAssetVirtualize` | The `MatchFiles`, replacement, and virtualization contracts of the behaviors |
@@ -172,7 +178,14 @@ TImagerFilterFactory::registerType('Sepia', TSepiaFilter::class); // <filter typ
 
 Register types before the configuration that uses them is parsed; a registered type takes
 precedence over a built-in type of the same name. In code, `addFilter()`, `removeFilter()`,
-`getFilter()`, and `getFilters()` on an imager edit and read its filters.
+`getFilter()`, and `getFilters()` on an imager edit and read its filters. Two filters with one
+name, or a `type` with a property that contradicts it, are configuration errors.
+
+Image sizes are limited at both ends. An imager's `MaximumPixels` (default 50 megapixels)
+rejects an image whose declared size is larger before it is decoded, so a small file cannot
+expand into gigabytes of memory. A filter's `MaximumOutputPixels` (the same default) rejects a
+`Resize`, `Image`, or `Text` configuration that would make a larger image. `0` turns either
+limit off.
 
 ### Graphics libraries
 
@@ -214,11 +227,16 @@ and it is written into the encoded image, so the published file is written once:
 
 - **Preserved** carriers are chosen with `MetaDataPreserve`: any of `EXIF`, `IPTC`, `XMP`,
   `Color` (the ICC profile), or `All` (the default) or `None`. A carrier the published format
-  cannot hold is dropped: GIF has no EXIF, and GIF and WebP have no IPTC. A TIFF's EXIF is the
-  image structure itself, so it is not transplanted from the source. BMP, WBMP, and XBM have no
-  prado-image container and publish without metadata.
+  cannot hold is dropped: GIF has no EXIF, and GIF and WebP have no IPTC. A TIFF keeps its
+  image structure tags, and the preserved EXIF is written into its directory. BMP, WBMP, and XBM
+  have no prado-image container and publish without metadata. `None` also removes comments, PNG
+  text chunks, and data after the end of the image.
 - **Scrubbed** identifying information is chosen with `Scrub`, by `TPrivacyCategory`: e.g.
-  `Location`, `Author`, `SerialNumber`, `Timestamp`, `Identity`, `Provenance`, `All`.
+  `Location`, `Author`, `SerialNumber`, `Timestamp`, `Identity`, `Provenance`, `All`. A scrub
+  also removes data after the end of the image, such as the secondary images of a JPEG (MPF),
+  and `Author` removes XMP face regions. When several imagers match one image, their scrubs
+  combine and only the carriers every one of them preserves are kept. A scrub that cannot be
+  written throws rather than publishing the unscrubbed image.
 - **Updated:** the EXIF and IPTC dimensions follow a resized image, an EXIF thumbnail is
   regenerated (`ExifThumbnail*`), JPEGs get the JFIF header and optional thumbnail selected by
   `JFIFMode` (`None`, `JFIF`, `Thumbnail`, `JFXXJPEG`, `JFXXPalette`, `JFXXColor`,
@@ -234,8 +252,8 @@ and it is written into the encoded image, so the published file is written once:
   </filter>
   ```
 
-  When no filter changes the pixels, only the metadata is rewritten; the encoded image data is
-  kept as it is.
+  When no filter changes the pixels and no conversion property (such as `ImageQuality`) is set,
+  only the metadata is rewritten; the encoded image data is kept as it is.
 - **Matched:** an imager's `MetaMatch` limits it to images whose metadata matches, e.g.
   `MetaMatch="Keywords=portfolio"` or `MetaMatch="EXIF:Model==X100V"`.
 

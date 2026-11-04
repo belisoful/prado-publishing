@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
@@ -14,7 +14,10 @@ use Prado\Caching\TFileCacheDependency;
 use Prado\Exceptions\TConfigurationException;
 use Prado\Exceptions\TInvalidDataValueException;
 use Prado\Exceptions\TIOException;
+use Prado\IO\Image\Meta\TEXIF;
 use Prado\IO\Image\Meta\TIPTC;
+use Prado\IO\Image\Meta\TXMP;
+use Prado\IO\Image\TImageFile;
 use Prado\IO\Image\TImageGraphics;
 use Prado\IO\Image\TImageGraphicsMode;
 use Prado\IO\Image\TJPEG;
@@ -22,6 +25,7 @@ use Prado\IO\Image\TTIFF;
 use Prado\Prado;
 use Prado\TApplication;
 use Prado\TApplicationMode;
+use Prado\TComponent;
 use Prado\Util\IBaseBehavior;
 use Prado\Util\TBehavior;
 use Prado\Web\Assets\Behaviors\Filters\TFilterImagerFilter;
@@ -30,6 +34,7 @@ use Prado\Web\Assets\Behaviors\Filters\TResizeImagerFilter;
 use Prado\Web\Assets\Behaviors\TAssetBlocker;
 use Prado\Web\Assets\Behaviors\TAssetImageFilter;
 use Prado\Web\Assets\Behaviors\TAssetImageMetaData;
+use Prado\Web\Assets\Behaviors\TAssetImageMetaDataMode;
 use Prado\Web\Assets\Behaviors\TAssetImagerBase;
 use Prado\Web\Assets\TAssetEventParameter;
 use Prado\Web\Assets\TImageAsset;
@@ -1058,5 +1063,114 @@ class TAssetImagerBaseTest extends PublishingTestCase
 		} catch (TIOException $e) {
 			self::assertStringContainsString('assetimagerbase_write_failed', $e->getMessage());
 		}
+	}
+
+	/**
+	 * Attaches a TAssetImageFilter to TImageAsset as a class behavior.
+	 * @param string $name the behavior name.
+	 * @param string $xml the inner XML of the behavior element.
+	 * @param array<string, mixed> $properties the imager properties.
+	 */
+	protected function attachFilterImager(string $name, string $xml, array $properties = []): void
+	{
+		$doc = new TXmlDocument();
+		$doc->loadFromString('<behavior>' . $xml . '</behavior>');
+		$this->attachClassBehavior($name, ['class' => TAssetImageFilter::class, IBaseBehavior::CONFIG_KEY => $doc] + $properties, TImageAsset::class);
+	}
+
+	/**
+	 * @param string $name the source file name.
+	 * @return string a 40x20 JPEG with GPS EXIF, IPTC, and XMP metadata.
+	 */
+	protected function locatedJpeg(string $name): string
+	{
+		$jpeg = TJPEG::fromImage(static::createImage(), 90);
+		$exif = new TEXIF();
+		$exif->setValueByName('Artist', 'Ann Author');
+		$exif->setLatitude(45.5);
+		$jpeg->setEXIF($exif);
+		$iptc = new TIPTC();
+		$iptc['Keywords'] = ['portfolio'];
+		$jpeg->setIPTC($iptc);
+		$xmp = TXMP::blank();
+		$xmp->setTitle('A Title');
+		$jpeg->setXMP($xmp);
+		$jpeg->save($path = $this->writeSource($name, ''));
+		return $path;
+	}
+
+	public function testMatchingImagersCombineTheirPrivacySettings(): void
+	{
+		foreach (['privacy first' => true, 'privacy second' => false] as $label => $privacyFirst) {
+			$imagers = [
+				'privacy' => '<metadata Scrub="Location" MetaDataPreserve="EXIF, XMP" />',
+				'thumbs' => '<metadata MetaDataPreserve="EXIF, IPTC" /><filter type="Resize" MaximumWidth="20" />',
+			];
+			if (!$privacyFirst) {
+				$imagers = array_reverse($imagers, true);
+			}
+			foreach ($imagers as $name => $xml) {
+				$this->attachFilterImager($name, $xml);
+			}
+
+			$published = $this->urlToPath($this->newManager()->publish($this->locatedJpeg("$label.jpg")));
+
+			self::assertSame(20, getimagesize($published)[0], "$label: the filters of both imagers run.");
+			$file = TImageFile::fromFile($published);
+			self::assertSame('Ann Author', $file->getEXIF()?->getValueByName('Artist'), "$label: both keep the EXIF.");
+			self::assertNull($file->getEXIF()->getLatitude(), "$label: the Scrub of either imager applies.");
+			self::assertNull($file->getXMP(), "$label: the XMP one imager drops is dropped.");
+			self::assertNull($file->getIPTC(), "$label: the IPTC one imager drops is dropped.");
+			foreach (array_keys($imagers) as $name) {
+				TComponent::detachClassBehavior($name, TImageAsset::class);
+			}
+		}
+
+		$metaData = new TAssetImageMetaData();
+		$imager = new TAssetImageFilter();
+		self::invoke($imager, 'mergeMetaDataConfig', $metaData);
+		self::assertSame([TAssetImageMetaDataMode::All], $metaData->getMetaDataPreserve(), 'Two imagers keeping everything keep everything.');
+		self::assertSame(0, $metaData->getScrub());
+	}
+
+	public function testMaximumPixels(): void
+	{
+		$imager = new TAssetImageFilter();
+		self::assertSame(50000000, $imager->getMaximumPixels());
+		$imager->setMaximumPixels('-5');
+		self::assertSame(0, $imager->getMaximumPixels(), 'Negative is no limit.');
+
+		// A small file declaring a 20000x20000 image, which would be decoded into gigabytes.
+		$chunk = fn (string $type, string $data) => pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
+		$bomb = "\x89PNG\r\n\x1a\n" . $chunk('IHDR', pack('NNCCCCC', 20000, 20000, 8, 2, 0, 0, 0)) . $chunk('IDAT', gzcompress(str_repeat("\0", 1024))) . $chunk('IEND', '');
+		$this->attachFilterImager('imager', '<filter type="Resize" MaximumWidth="100" />');
+		try {
+			$this->newManager()->publish($this->writeSource('bomb.png', $bomb));
+			self::fail('An image over MaximumPixels throws.');
+		} catch (TInvalidDataValueException $e) {
+			self::assertSame('assetimagerbase_image_too_large', $e->getErrorCode());
+		}
+
+		TComponent::detachClassBehavior('imager', TImageAsset::class);
+		$this->attachFilterImager('imager', '<filter type="Resize" MaximumWidth="10" />', ['MaximumPixels' => 800]);
+		$published = $this->urlToPath($this->newManager()->publish($this->writeImage('limit.png', 40, 20)));
+		self::assertSame(10, getimagesize($published)[0], 'An image of MaximumPixels is processed.');
+	}
+
+	public function testFinalizeThrowsWhenTheScrubCannotBeWritten(): void
+	{
+		$imager = new TAssetImageFilter();
+		$metaData = new TAssetImageMetaData();
+		$metaData->setScrub('Location');
+		$metaData->setMetaDataSource($this->locatedJpeg('source.jpg'));
+		$dst = $this->writeSource('unreadable.jpg', 'not an image');
+		$param = new TAssetEventParameter('onProcessAsset', $dst);
+		$param->setImage(static::createImage());
+		$param->setOriginalImageType(IMAGETYPE_JPEG);
+		$param->setImageType(IMAGETYPE_JPEG);
+		$param->setImageMetaData($metaData);
+
+		$this->expectException(TIOException::class);
+		$imager->finalize($dst, $param);
 	}
 }

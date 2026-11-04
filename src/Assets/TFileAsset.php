@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets;
@@ -36,14 +36,17 @@ class TFileAsset extends TAsset
 	}
 
 	/**
-	 * A file asset copies its source unchanged, unless a subclass converts it in
-	 * {@see putFile} or an enabled behavior takes over writing with `dyWriteAsset`.
+	 * A file asset copies its source unchanged, unless a subclass overrides {@see putFile},
+	 * {@see writeAsset}, or {@see publish}, or an enabled behavior takes over writing with
+	 * `dyWriteAsset`.
 	 * @return bool whether the asset publishes its source unchanged.
 	 */
 	public function getIsPassThrough(): bool
 	{
-		if ((new \ReflectionMethod($this, 'putFile'))->getDeclaringClass()->getName() !== self::class) {
-			return false;
+		foreach (['putFile', 'writeAsset', 'publish'] as $method) {
+			if (!in_array((new \ReflectionMethod($this, $method))->getDeclaringClass()->getName(), [self::class, TAsset::class], true)) {
+				return false;
+			}
 		}
 		foreach ($this->getBehaviors() as $behavior) {
 			if ($behavior->getEnabled() && method_exists($behavior, 'dyWriteAsset')) {

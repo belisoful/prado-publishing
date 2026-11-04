@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -66,9 +66,6 @@ class TAssetCompress extends TBehavior implements IAssetMatching, IAssetFinalize
 
 	/** @var ?string the regular expression matching the file paths to compress. */
 	private ?string $_matchFiles = null;
-
-	/** @var bool whether the asset file path matched. */
-	private bool $_match = false;
 
 	/** @var string the content-coding token. */
 	private string $_method = 'gzip';
@@ -253,16 +250,22 @@ class TAssetCompress extends TBehavior implements IAssetMatching, IAssetFinalize
 	}
 
 	/**
-	 * Matches the asset file path.
-	 * @param string $filePath the file path.
-	 * @param \Prado\Util\TCallChain $callchain the dynamic event chain.
-	 * @return string the file path.
+	 * Whether the asset file path matches {@see getMatchFiles MatchFiles}. The owner's
+	 * {@see \Prado\Web\Assets\TAsset::getAssetFilePath AssetFilePath}, the virtual path
+	 * being published, is matched; without an owner asset file path, the given path is.
+	 * @param mixed $filePath the path matched when the owner has no asset file path.
+	 * @return bool whether the asset file path matches.
 	 */
-	public function dySetAssetFilePathPre($filePath, $callchain)
+	protected function getIsMatch($filePath = null): bool
 	{
-		$filePath = $callchain->dySetAssetFilePathPre($filePath);
-		$this->_match = !empty($filePath) && ($match = $this->getMatchFiles()) !== null && preg_match($match, $filePath) === 1;
-		return $filePath;
+		if (($match = $this->getMatchFiles()) === null) {
+			return false;
+		}
+		$owner = $this->getOwner();
+		if ($owner !== null && method_exists($owner, 'getAssetFilePath')) {
+			$filePath = $owner->getAssetFilePath();
+		}
+		return is_string($filePath) && $filePath !== '' && preg_match($match, $filePath) === 1;
 	}
 
 	/**
@@ -282,12 +285,13 @@ class TAssetCompress extends TBehavior implements IAssetMatching, IAssetFinalize
 
 	/**
 	 * @param mixed $filePath the published file path.
-	 * @return bool whether a file path is compressed: the behavior is enabled, the path
-	 *   matched, is a file not already ending with the extension, and the codec is available.
+	 * @return bool whether a file path is compressed: the behavior is enabled, the asset
+	 *   file path matches, the path is a file not already ending with the extension, and
+	 *   the codec is available.
 	 */
 	protected function getAppliesTo($filePath): bool
 	{
-		return $this->getEnabled() && $this->_match && is_string($filePath) && $filePath !== ''
+		return $this->getEnabled() && is_string($filePath) && $filePath !== '' && $this->getIsMatch($filePath)
 			&& substr($filePath, -1) !== DIRECTORY_SEPARATOR
 			&& strcasecmp(substr($filePath, -strlen($this->getExtension())), $this->getExtension()) !== 0
 			&& $this->getIsAvailable();
@@ -307,14 +311,14 @@ class TAssetCompress extends TBehavior implements IAssetMatching, IAssetFinalize
 
 	/**
 	 * Compresses the written file in place. Data already in the coding's format is left
-	 * as it is.
+	 * as it is. An owned behavior compresses only when the asset file path matches.
 	 * @param string $dstFile the written file.
 	 * @param TAssetEventParameter $param the event parameter.
 	 * @throws TIOException when the file cannot be read or written, or the codec fails.
 	 */
 	public function finalize(string $dstFile, TAssetEventParameter $param)
 	{
-		if (!$this->getEnabled() || !$this->_match || $dstFile === '' || !is_file($dstFile)) {
+		if (!$this->getEnabled() || $dstFile === '' || !is_file($dstFile) || ($this->getOwner() !== null && !$this->getIsMatch())) {
 			return;
 		}
 		if (($data = @file_get_contents($dstFile)) === false) {

@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors\Filters;
@@ -21,7 +21,8 @@ use Prado\Web\Assets\TAssetEventParameter;
  *
  * Use the {@see getInputGamma InputGamma} and {@see getOutputGamma
  * OutputGamma} to correct the image.  Both must be greater than 0.  Imagick has a
- * single gamma, and so is given the ratio of the OutputGamma to the InputGamma.
+ * single gamma, and so is given the ratio of the OutputGamma to the InputGamma.  The
+ * gamma corrects the color channels only, as GD leaves the alpha channel.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @since 0.1.0
@@ -104,6 +105,8 @@ class TGammaCorrectImagerFilter extends TBaseImagerFilter
 	 * Calls Imagick gammaImage() with the ratio of the OutputGamma to the InputGamma: GD
 	 * raises each channel to the power of InputGamma / OutputGamma and Imagick to the
 	 * inverse of its gamma, so the ratio gives the same correction in both libraries.
+	 * The red, green, and blue channels are corrected, as ImageMagick 7 would otherwise
+	 * correct the alpha channel too.
 	 *
 	 * @param \Imagick &$image The image being filtered.
 	 * @param ?TAssetEventParameter $param the publishing context.
@@ -112,7 +115,7 @@ class TGammaCorrectImagerFilter extends TBaseImagerFilter
 	protected function filterImagickImage(&$image, ?TAssetEventParameter $param = null): ?bool
 	{
 		// The gammas are validated to be greater than 0, so the ratio is a valid gamma.
-		$image->gammaImage($this->getOutputGamma() / $this->getInputGamma());
+		$image->gammaImage($this->getOutputGamma() / $this->getInputGamma(), \Imagick::CHANNEL_RED | \Imagick::CHANNEL_GREEN | \Imagick::CHANNEL_BLUE);
 		return true;
 	}
 }

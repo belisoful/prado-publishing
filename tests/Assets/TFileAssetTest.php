@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets;
@@ -15,6 +15,7 @@ use Prado\Web\Assets\TAsset;
 use Prado\Web\Assets\TFileAsset;
 use Prado\Web\Assets\TGDFAsset;
 use Prado\Web\Tests\Fixtures\TAssetPathFilterBehavior;
+use Prado\Web\Tests\Fixtures\TPartialFileAsset;
 use Prado\Web\Tests\Fixtures\TProbeFileAsset;
 use Prado\Web\Tests\Fixtures\TUppercaseAssetBehavior;
 use Prado\Web\Tests\PublishingTestCase;
@@ -275,6 +276,21 @@ class TFileAssetTest extends PublishingTestCase
 		self::assertTrue($asset->getIsPassThrough(), 'A file asset copies its source unchanged.');
 		self::assertTrue((new TProbeFileAsset($source))->getIsPassThrough(), 'A subclass that does not override putFile passes through.');
 		self::assertFalse((new TGDFAsset($source))->getIsPassThrough(), 'A subclass overriding putFile converts the file.');
+		self::assertFalse((new TPartialFileAsset($source))->getIsPassThrough(), 'A test subclass overriding putFile writes its own content.');
+		$writer = new class ($source) extends TFileAsset {
+			public function writeAsset(string $filepath): bool
+			{
+				return file_put_contents($filepath, 'written') !== false;
+			}
+		};
+		self::assertFalse($writer->getIsPassThrough(), 'A subclass overriding writeAsset writes its own content.');
+		$publisher = new class ($source) extends TFileAsset {
+			public function publish(string $dst): ?bool
+			{
+				return file_put_contents($dst, 'published') !== false;
+			}
+		};
+		self::assertFalse($publisher->getIsPassThrough(), 'A subclass overriding publish writes its own content.');
 
 		$asset->attachBehavior('upper', TUppercaseAssetBehavior::class);
 		self::assertTrue($asset->getIsPassThrough(), 'A behavior without dyWriteAsset does not write the file.');

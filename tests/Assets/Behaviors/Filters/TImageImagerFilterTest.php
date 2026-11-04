@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors\Filters;
@@ -17,6 +17,7 @@ use Prado\IO\Image\TPNG;
 use Prado\Prado;
 use Prado\Web\Assets\Behaviors\Filters\TImageImagerFilter;
 use Prado\Web\Assets\Behaviors\Filters\TInterpolationImagerMode;
+use Prado\Web\Assets\Behaviors\Filters\TResizeImagerFilter;
 use Prado\Web\Assets\Behaviors\TAssetImagerBase;
 use Prado\Web\Assets\TAssetEventParameter;
 use Prado\Web\Tests\PublishingTestCase;
@@ -208,6 +209,87 @@ class TImageImagerFilterTest extends PublishingTestCase
 		} catch (TInvalidDataValueException $e) {
 			self::assertSame('imageimagerfilter_bad_image_file_path', $e->getErrorCode());
 		}
+	}
+
+	public function testWatermarkOutsideTheNamespace(): void
+	{
+		// Regression: an unknown namespace gave a path from the root, and ".." left the namespace.
+		$this->writeSource('outside.png', (string) TPNG::fromImage(static::createImage(4, 4)));
+		$image = static::createImage();
+		$filter = static::newFilter('missing.png', ['ImageNamespace' => 'No.Such.ImageImagerFilterNamespace']);
+		try {
+			$filter->filterImage($image);
+			self::fail('An exception was expected for an unknown namespace.');
+		} catch (TInvalidDataValueException $e) {
+			self::assertSame('imageimagerfilter_bad_namespace', $e->getErrorCode());
+		}
+		$filter = static::newFilter(ltrim(realpath($this->srcDir . DIRECTORY_SEPARATOR . 'outside.png'), '/'), ['ImageNamespace' => 'No.Such.ImageImagerFilterNamespace']);
+		try {
+			$filter->filterImage($image);
+			self::fail('An exception was expected for a file from the root.');
+		} catch (TInvalidDataValueException $e) {
+			self::assertSame('imageimagerfilter_bad_namespace', $e->getErrorCode());
+		}
+		try {
+			static::newFilter('..' . DIRECTORY_SEPARATOR . 'outside.png')->filterImage($image);
+			self::fail('An exception was expected for a file outside the namespace.');
+		} catch (TInvalidDataValueException $e) {
+			self::assertSame('imageimagerfilter_bad_image_file_path', $e->getErrorCode());
+		}
+		self::assertSame(0x3366CC, static::rgbAt($image, 30, 15), 'Nothing is drawn.');
+	}
+
+	public function testOnlyTheCropFillCropsTheWatermark(): void
+	{
+		// Regression: the aspect of a scaled watermark was compared in floats and floored, so a pixel was cropped.
+		$filter = new class () extends TImageImagerFilter {
+			public function geometry(int $sx, int $sy, int $wx, int $wy): array
+			{
+				return $this->computeImageGeometry($sx, $sy, $wx, $wy);
+			}
+		};
+		$cases = [[200, 57, 16, 0], [7, 2, 61, 0], [7, 1, 29, 0], [300, 100, 0, 7], [1000, 333, 999, 0], [640, 480, 100, 100]];
+		foreach ($cases as [$wx, $wy, $fx, $fy]) {
+			foreach ([true, false] as $cropFill) {
+				if ($fx && $fy && $cropFill) {
+					continue;
+				}
+				$filter->setImageFixedWidth($fx);
+				$filter->setImageFixedHeight($fy);
+				$filter->setImageCropFill($cropFill);
+				self::assertSame([0, 0, $wx, $wy], array_slice($filter->geometry(2000, 2000, $wx, $wy), 0, 4), "{$wx}x{$wy} fixed {$fx}x{$fy} is drawn whole.");
+			}
+		}
+		$filter->setImageCropFill(true);
+		$filter->setImageFixedWidth(20);
+		$filter->setImageFixedHeight(20);
+		self::assertSame([10, 0, 10, 10, 20, 20], array_slice($filter->geometry(100, 100, 30, 10), 0, 6), 'The crop fill takes the center.');
+		self::assertSame([0, 0, 10, 10, 20, 20], array_slice($filter->geometry(100, 100, 10, 10), 0, 6), 'The crop fill of the same aspect crops nothing.');
+		$filter->setImageFixedWidth(30);
+		$filter->setImageFixedHeight(10);
+		self::assertSame([1, 0, 6, 2, 30, 10], array_slice($filter->geometry(100, 100, 7, 2), 0, 6), 'The offset of half a pixel is rounded.');
+	}
+
+	public function testTheScaledWatermarkIsLimited(): void
+	{
+		// Regression: an ImageFixedWidth of 20000 scaled the watermark to 20000x20000.
+		$file = $this->writeWatermark();
+		$images = ['GD' => static::createImage()];
+		if (TImageGraphics::hasImagick()) {
+			$images['Imagick'] = static::imagickImage(static::createImage());
+		}
+		foreach ($images as $library => $image) {
+			try {
+				static::newFilter($file, ['ImageFixedWidth' => 20000])->filterImage($image);
+				self::fail("$library: an exception was expected.");
+			} catch (TInvalidDataValueException $e) {
+				self::assertSame('imagerfilter_output_too_large', $e->getErrorCode());
+			}
+		}
+		$image = static::createImage();
+		self::assertTrue(static::newFilter($file, ['ImageFixedWidth' => 20, 'MaximumOutputPixels' => 400])->filterImage($image), 'A size at the limit is drawn.');
+		$this->expectException(TInvalidDataValueException::class);
+		static::newFilter($file, ['ImageFixedWidth' => 21, 'MaximumOutputPixels' => 400])->filterImage($image);
 	}
 
 	public function testUnreadableWatermark(): void
@@ -462,6 +544,20 @@ class TImageImagerFilterTest extends PublishingTestCase
 		}
 		self::assertCount(3, array_unique(array_map('serialize', $renders)), 'Each Imagick filter renders differently.');
 		self::assertSame($renders['BilinearFixed'], $renders['Power'], 'An unmapped mode falls back to the default filter.');
+	}
+
+	public function testImagickScaleModesAreTheResizeModes(): void
+	{
+		// Regression: Bicubic was the cubic B-spline here and Catmull-Rom in TResizeImagerFilter.
+		if (!TImageGraphics::hasImagick()) {
+			self::markTestSkipped('Imagick is not installed.');
+		}
+		$watermark = new \ReflectionMethod(TImageImagerFilter::class, 'imagickScaleMode');
+		$resize = new \ReflectionMethod(TResizeImagerFilter::class, 'imagickScaleMode');
+		foreach ((new \ReflectionClass(TInterpolationImagerMode::class))->getConstants() as $name => $mode) {
+			self::assertSame($resize->invoke(null, $mode), $watermark->invoke(null, $mode), $name);
+		}
+		self::assertSame(\Imagick::FILTER_CATROM, $watermark->invoke(null, IMG_BICUBIC));
 	}
 
 	public function testImagickTransparency(): void

@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors\Filters;
@@ -48,8 +48,10 @@ use Prado\Web\Assets\TAssetEventParameter;
  *
  * The filter works in both graphics libraries and places the watermark the same,
  * but each library scales it itself: Imagick resizes with the filter closest to the
- * ImageInterpolationMode -the default when it has none-, so a scaled watermark is
- * not pixel for pixel the one GD interpolates.
+ * ImageInterpolationMode, the map {@see TResizeImagerFilter} also uses, and the default
+ * when it has none, so a scaled watermark is not pixel for pixel the one GD interpolates.
+ *
+ * The scaled watermark is limited to {@see getMaximumOutputPixels MaximumOutputPixels}.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @since 0.1.0
@@ -300,10 +302,12 @@ class TImageImagerFilter extends TBaseImagerFilter
 
 	/**
 	 * The file of the [watermark] image, from the {@see getImageFileName ImageFileName}
-	 * in the {@see getImageNamespace ImageNamespace}.
-	 * @throws TInvalidDataValueException when the watermark image file does not exist.
-	 * @return ?string the watermark image file, or null when there is no watermark to
-	 *   render.
+	 * in the {@see getImageNamespace ImageNamespace}.  The real path of the file must be
+	 * inside the directory of the namespace, so a file name cannot leave it.
+	 * @throws TInvalidDataValueException when the namespace is not a directory, or the
+	 *   watermark image file does not exist in it.
+	 * @return ?string the real path of the watermark image file, or null when there is no
+	 *   watermark to render.
 	 */
 	protected function resolveImageFile(): ?string
 	{
@@ -313,9 +317,12 @@ class TImageImagerFilter extends TBaseImagerFilter
 		if (empty($ns) || empty($imageFile)) {
 			return null;
 		}
-		$filename = Prado::getPathOfNamespace($ns) . DIRECTORY_SEPARATOR . $imageFile;
-
-		if (!is_file($filename)) {
+		$directory = Prado::getPathOfNamespace($ns);
+		if ($directory === null || !($directory = realpath($directory)) || !is_dir($directory)) {
+			throw new TInvalidDataValueException('imageimagerfilter_bad_namespace', $ns);
+		}
+		$filename = realpath($directory . DIRECTORY_SEPARATOR . $imageFile);
+		if ($filename === false || !is_file($filename) || !str_starts_with($filename, rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR)) {
 			throw new TInvalidDataValueException('imageimagerfilter_bad_image_file_path', $imageFile, $ns);
 		}
 		return $filename;
@@ -333,6 +340,8 @@ class TImageImagerFilter extends TBaseImagerFilter
 	 * @param int $sy The height of the image being filtered.
 	 * @param int $wx The width of the watermark image.
 	 * @param int $wy The height of the watermark image.
+	 * @throws TInvalidDataValueException when the scaled watermark has more pixels than
+	 *   {@see getMaximumOutputPixels MaximumOutputPixels}.
 	 * @return array{0:int, 1:int, 2:int, 3:int, 4:int, 5:int, 6:int, 7:int} the source
 	 *   [x, y, width, height] of the watermark, the [width, height] it is drawn at, and
 	 *   the [x, y] it is drawn at on the image.
@@ -373,15 +382,19 @@ class TImageImagerFilter extends TBaseImagerFilter
 			}
 		}
 
-		// The source region of the watermark with the aspect ratio of the destination.
-		$widerThanHeight = ($wx * $dy > $dx * $wy);
-		$cx = $widerThanHeight ? $wy * $dx / $dy : $wx;
-		$cy = !$widerThanHeight ? $wx * $dy / $dx : $wy;
-
-		$srcX = max(0, min($wx - 1, (int) floor($ox)));
-		$srcY = max(0, min($wy - 1, (int) floor($oy)));
-		$srcW = max(1, min($wx - $srcX, (int) floor($cx)));
-		$srcH = max(1, min($wy - $srcY, (int) floor($cy)));
+		$srcX = $srcY = 0;
+		$srcW = $wx;
+		$srcH = $wy;
+		if ($ox || $oy) {
+			// The crop fill draws the centered region of the watermark with the aspect ratio of the fixed size.
+			$srcX = max(0, min($wx - 1, (int) round($ox)));
+			$srcY = max(0, min($wy - 1, (int) round($oy)));
+			$srcW = max(1, min($wx - $srcX, (int) round($wx - 2 * $ox)));
+			$srcH = max(1, min($wy - $srcY, (int) round($wy - 2 * $oy)));
+		}
+		if (floor($dx) != $wx || floor($dy) != $wy) {
+			$this->ensureOutputSize(max(1.0, floor($dx)), max(1.0, floor($dy)));
+		}
 		$dstW = max(1, (int) floor($dx));
 		$dstH = max(1, (int) floor($dy));
 
@@ -495,40 +508,8 @@ class TImageImagerFilter extends TBaseImagerFilter
 			$waterImage->setImagePage(0, 0, 0, 0); // The crop leaves the page of the original.
 		}
 		if ($dstW !== $srcW || $dstH !== $srcH) {
-			$waterImage->resizeImage($dstW, $dstH, static::imagickResizeFilter($this->getImageInterpolationMode()), 1.0);
+			$waterImage->resizeImage($dstW, $dstH, static::imagickScaleMode($this->getImageInterpolationMode()), 1.0);
 		}
 		return $image->compositeImage($waterImage, \Imagick::COMPOSITE_OVER, $dstX, $dstY);
-	}
-
-	/**
-	 * The Imagick resize filter closest to a GD interpolation mode.  The modes GD
-	 * implements as an interpolation of its own, and the modes Imagick has no filter
-	 * for, resize with the Imagick filter of the default BilinearFixed.
-	 * @param int $mode The GD interpolation mode, eg. IMG_BILINEAR_FIXED.
-	 * @return int The Imagick filter, eg. \Imagick::FILTER_TRIANGLE.
-	 */
-	protected static function imagickResizeFilter(int $mode): int
-	{
-		$filters = [
-			IMG_NEAREST_NEIGHBOUR => \Imagick::FILTER_POINT,
-			IMG_BOX => \Imagick::FILTER_BOX,
-			IMG_TRIANGLE => \Imagick::FILTER_TRIANGLE,
-			IMG_BILINEAR_FIXED => \Imagick::FILTER_TRIANGLE,
-			IMG_HERMITE => \Imagick::FILTER_HERMITE,
-			IMG_HANNING => \Imagick::FILTER_HANNING,
-			IMG_HAMMING => \Imagick::FILTER_HAMMING,
-			IMG_BLACKMAN => \Imagick::FILTER_BLACKMAN,
-			IMG_GAUSSIAN => \Imagick::FILTER_GAUSSIAN,
-			IMG_QUADRATIC => \Imagick::FILTER_QUADRATIC,
-			IMG_BICUBIC => \Imagick::FILTER_CUBIC,
-			IMG_BICUBIC_FIXED => \Imagick::FILTER_CUBIC,
-			IMG_GENERALIZED_CUBIC => \Imagick::FILTER_CUBIC,
-			IMG_BSPLINE => \Imagick::FILTER_CUBIC, // The Imagick cubic filter is a B-spline.
-			IMG_CATMULLROM => \Imagick::FILTER_CATROM,
-			IMG_MITCHELL => \Imagick::FILTER_MITCHELL,
-			IMG_SINC => \Imagick::FILTER_SINC,
-			IMG_BESSEL => \Imagick::FILTER_BESSEL,
-		];
-		return $filters[$mode] ?? \Imagick::FILTER_TRIANGLE;
 	}
 }

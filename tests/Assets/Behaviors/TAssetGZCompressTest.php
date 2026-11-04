@@ -5,14 +5,13 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
 
 use Prado\Exceptions\TIOException;
 use Prado\TEventParameter;
-use Prado\Util\TCallChain;
 use Prado\Web\Assets\Behaviors\IAssetMatching;
 use Prado\Web\Assets\Behaviors\TAssetCacheBuster;
 use Prado\Web\Assets\Behaviors\TAssetGZCompress;
@@ -228,22 +227,15 @@ class TAssetGZCompressTest extends PublishingTestCase
 		self::assertSame($source, $gzip->dyAlterAssetFilePath($source));
 	}
 
-	public function testMatchingIsRecomputedOnEachPreValidationFilter(): void
+	public function testWithoutAnOwnerTheGivenPathIsMatched(): void
 	{
 		$gzip = new TAssetGZCompress();
 		$gzip->setMatchFiles('/\.js$/');
 
-		self::assertSame('/a.js', $gzip->dySetAssetFilePathPre('/a.js', new TCallChain('dySetAssetFilePathPre')));
 		self::assertSame('/a.js.gz', $gzip->dyAlterAssetFilePath('/a.js'));
-
-		self::assertSame('', $gzip->dySetAssetFilePathPre('', new TCallChain('dySetAssetFilePathPre')));
-		self::assertSame('/a.js', $gzip->dyAlterAssetFilePath('/a.js'), 'An empty path does not match.');
-
-		self::assertNull($gzip->dySetAssetFilePathPre(null, new TCallChain('dySetAssetFilePathPre')));
-		self::assertSame('/a.js', $gzip->dyAlterAssetFilePath('/a.js'), 'A cancelled path does not match.');
-
-		$gzip->dySetAssetFilePathPre('/b.css', new TCallChain('dySetAssetFilePathPre'));
-		self::assertSame('/a.js', $gzip->dyAlterAssetFilePath('/a.js'), 'A non-matching path clears the match.');
+		self::assertSame('', $gzip->dyAlterAssetFilePath(''), 'An empty path does not match.');
+		self::assertNull($gzip->dyAlterAssetFilePath(null), 'A cancelled path does not match.');
+		self::assertSame('/b.css', $gzip->dyAlterAssetFilePath('/b.css'), 'A non-matching path is not renamed.');
 	}
 
 	public function testRegistersAsTheLastFinalizer(): void
@@ -344,14 +336,14 @@ class TAssetGZCompressTest extends PublishingTestCase
 
 	public function testFinalizeSkipsWhenNotApplicable(): void
 	{
-		$asset = $this->gzipAsset($this->writeSource('app.js'));
-		$gzip = $asset->asa('gzip');
+		$css = $this->gzipAsset($this->writeSource('site.css'));
 		file_put_contents($dst = $this->assetDir . '/out.gz', self::CONTENT);
 
-		$gzip->finalize($dst, new TAssetEventParameter());
+		$css->asa('gzip')->finalize($dst, new TAssetEventParameter());
 		self::assertSame(self::CONTENT, file_get_contents($dst), 'An unmatched asset is not compressed.');
 
-		$asset->getAssetFilePath();
+		$asset = $this->gzipAsset($this->writeSource('app.js'));
+		$gzip = $asset->asa('gzip');
 		$gzip->finalize('', new TAssetEventParameter());
 		$gzip->finalize($this->assetDir . '/missing.gz', new TAssetEventParameter());
 		$gzip->finalize($this->assetDir, new TAssetEventParameter());

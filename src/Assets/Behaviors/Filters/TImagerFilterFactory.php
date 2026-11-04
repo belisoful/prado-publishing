@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors\Filters;
@@ -130,12 +130,16 @@ class TImagerFilterFactory
 	 * Parses an imager configuration: a {@see TXmlElement} with `<metadata>` and `<filter>`
 	 * child elements, or an array with "metadata" and "filters" entries (or a list of
 	 * filters). A filter has a `type` or a `class`, and an optional `name`; its other
-	 * attributes are its properties. An XML element is parsed once per name prefix; later
-	 * calls with that prefix return the same result.
+	 * attributes are its properties. The names, given or numbered, are unique, and a
+	 * property a type implies, such as the effect of an effect type, cannot be given another
+	 * value. An XML element is parsed once per name prefix; later calls with that prefix
+	 * return the same result.
 	 * @param mixed $config the configuration.
 	 * @param string $namePrefix the name prefix of filters without a name, numbered in order.
-	 * @throws TConfigurationException when a filter is not an array or has neither a type nor a class.
-	 * @throws TInvalidDataValueException when a filter has an unknown type, or both a type and a class.
+	 * @throws TConfigurationException when a filter is not an array, has neither a type nor
+	 *   a class, or has the name of an earlier filter.
+	 * @throws TInvalidDataValueException when a filter has an unknown type, both a type and a
+	 *   class, or a property that conflicts with the one its type implies.
 	 * @return array{metadata:?array, filters:array<string, array{class:string, properties:array, config:mixed}>}
 	 *   the configuration.
 	 */
@@ -210,13 +214,41 @@ class TImagerFilterFactory
 			}
 			if ($type) {
 				[$class, $implied] = static::resolveType((string) $type);
+				foreach ($implied as $property => $value) {
+					if (array_key_exists($property, $properties) && !static::isSameImpliedValue($property, $value, $properties[$property])) {
+						throw new TInvalidDataValueException('imagerfilterfactory_type_conflict', $type, $property, $properties[$property]);
+					}
+				}
 				$properties = $implied + $properties;
 			} elseif (!$class) {
 				throw new TConfigurationException('imagerfilterfactory_no_filter_type', $name);
 			}
+			if (array_key_exists($name, $result)) {
+				throw new TConfigurationException('imagerfilterfactory_duplicate_name', $name);
+			}
 			$result[$name] = ['class' => (string) $class, 'properties' => $properties, 'config' => $element];
 		}
 		return $result;
+	}
+
+	/**
+	 * Whether a property of a filter specification has the value its type implies.  An
+	 * effect is compared by its IMG_FILTER_* constant, so a name and its number agree.
+	 * @param string $property the property, lower case.
+	 * @param mixed $implied the value the type implies.
+	 * @param mixed $value the value of the specification.
+	 * @return bool whether the values are the same.
+	 */
+	protected static function isSameImpliedValue(string $property, $implied, $value): bool
+	{
+		$normalize = static function ($value) use ($property) {
+			$value = strtolower(trim((string) $value));
+			if ($property === 'effect' && !is_numeric($value)) {
+				return (string) (TFilterImagerFilter::FILTER_MAP[$value] ?? $value);
+			}
+			return $value;
+		};
+		return $normalize($implied) === $normalize($value);
 	}
 
 	/**

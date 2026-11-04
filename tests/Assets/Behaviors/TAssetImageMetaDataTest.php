@@ -5,18 +5,20 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
 
 use Prado\Exceptions\TInvalidDataValueException;
+use Prado\Exceptions\TIOException;
 use Prado\IO\Image\Meta\TEXIF;
 use Prado\IO\Image\Meta\TIPTC;
 use Prado\IO\Image\Meta\TIPTCTags;
 use Prado\IO\Image\Meta\TJFIFFormat;
 use Prado\IO\Image\Meta\TXMP;
 use Prado\IO\Image\TGIF;
+use Prado\IO\Image\TImageChunk;
 use Prado\IO\Image\TIFF\TTIFFDataType;
 use Prado\IO\Image\TImageFile;
 use Prado\IO\Image\TImageGraphics;
@@ -24,6 +26,7 @@ use Prado\IO\Image\TImageGraphicsMode;
 use Prado\IO\Image\TJPEG;
 use Prado\IO\Image\TPNG;
 use Prado\IO\Image\TPrivacyCategory;
+use Prado\IO\Image\TTIFF;
 use Prado\Web\Assets\Behaviors\Filters\TInterpolationImagerMode;
 use Prado\Web\Assets\Behaviors\TAssetImageMetaData;
 use Prado\Web\Assets\Behaviors\TAssetImageMetaDataMode;
@@ -574,7 +577,11 @@ class TAssetImageMetaDataTest extends PublishingTestCase
 		$source = $this->writeMetaJpeg();
 		self::assertTrue($this->newMetaData($source, ['MetaDataPreserve' => 'EXIF'])->getNeedsWrite());
 		self::assertTrue($this->newMetaData($source, ['Scrub' => 'Location'])->getNeedsWrite());
-		self::assertFalse($this->newMetaData($this->writeImage('plain.jpg'), ['MetaDataPreserve' => 'None'])->getNeedsWrite(), 'Nothing to drop.');
+		self::assertTrue($this->newMetaData($this->writeImage('commented.jpg'), ['MetaDataPreserve' => 'None'])->getNeedsWrite(), 'The GD comment is dropped.');
+		$plain = TJPEG::fromImage(static::createImage(), 90);
+		$plain->setComment(null);
+		$plain->save($path = $this->tempDir . '/plain.jpg');
+		self::assertFalse($this->newMetaData($path, ['MetaDataPreserve' => 'None'])->getNeedsWrite(), 'Nothing to drop.');
 	}
 
 	public function testCreateThumbnail(): void
@@ -644,5 +651,150 @@ class TAssetImageMetaDataTest extends PublishingTestCase
 
 		self::assertInstanceOf(\GdImage::class, $thumbnail, 'The thumbnail is scaled with GD.');
 		self::assertSame([20, 10], [imagesx($thumbnail), imagesy($thumbnail)]);
+	}
+
+	/**
+	 * @return string a JPEG with GPS EXIF and a comment, followed by a secondary JPEG with
+	 *   its own EXIF and an MPF index segment, as a Multi-Picture Format file has.
+	 */
+	protected function multiPictureJpeg(): string
+	{
+		$second = TJPEG::fromImage(static::createImage(8, 4), 80);
+		$exif = new TEXIF();
+		$exif->setValueByName('Artist', 'Trailer Artist');
+		$exif->setLatitude(10.25);
+		$second->setEXIF($exif);
+		$bytes = file_get_contents($this->writeMetaJpeg('primary.jpg', ['gps' => true]));
+		$mpf = "MPF\0" . str_repeat("\x01", 12);
+		return substr($bytes, 0, 2) . "\xFF\xE2" . pack('n', strlen($mpf) + 2) . $mpf . substr($bytes, 2) . $second->toBinary();
+	}
+
+	public function testRemoveTrailingData(): void
+	{
+		$bytes = $this->multiPictureJpeg();
+
+		$removed = TAssetImageMetaData::removeTrailingData($bytes);
+
+		self::assertStringNotContainsString('Trailer Artist', $removed, 'The secondary image after the EOI is removed.');
+		self::assertStringNotContainsString("MPF\0", $removed, 'The MPF index is removed.');
+		self::assertSame(file_get_contents($this->srcDir . '/primary.jpg'), $removed, 'The primary image is kept byte for byte.');
+		self::assertSame(45.5, TImageFile::fromString($removed)->getEXIF()->getLatitude(), 'The metadata of the primary image is kept.');
+
+		$gif = TGIF::fromImage(static::createImage())->toBinary();
+		self::assertSame($gif, TAssetImageMetaData::removeTrailingData($gif . 'TRAILER'), 'The data after the GIF trailer is removed.');
+		$png = TPNG::fromImage(static::createImage())->toBinary();
+		self::assertSame($png . 'TRAILER', TAssetImageMetaData::removeTrailingData($png . 'TRAILER'), 'Other formats are unchanged.');
+		self::assertSame("\xFF\xD8\xFF\xDA", TAssetImageMetaData::removeTrailingData("\xFF\xD8\xFF\xDA"), 'A JPEG without its EOI is unchanged.');
+	}
+
+	public function testWriteMetaDataRemovesTheTrailingDataWhenMetaDataIsRemoved(): void
+	{
+		$source = $this->writeSource('multi.jpg', $this->multiPictureJpeg());
+		foreach (['Scrub' => 'All', 'MetaDataPreserve' => 'EXIF'] as $property => $value) {
+			$metaData = $this->newMetaData($source, [$property => $value]);
+			self::assertTrue($metaData->getRemovesMetaData());
+			self::assertTrue($metaData->getNeedsWrite());
+			copy($source, $target = $this->tempDir . '/published.jpg');
+
+			self::assertTrue($metaData->writeMetaData($target, null, false));
+
+			$bytes = file_get_contents($target);
+			self::assertStringNotContainsString('Trailer Artist', $bytes, "$property=$value removes the secondary image.");
+			self::assertStringNotContainsString("MPF\0", $bytes);
+		}
+
+		$metaData = $this->newMetaData($source);
+		self::assertFalse($metaData->getRemovesMetaData());
+		self::assertFalse($metaData->getNeedsWrite(), 'All is preserved: the secondary image stays.');
+		self::assertStringContainsString('Trailer Artist', $metaData->writeImageBytes(file_get_contents($source), null, false));
+	}
+
+	public function testPreserveNoneRemovesTheCommentsAndTextChunks(): void
+	{
+		$jpeg = TJPEG::fromImage(static::createImage(), 90);
+		$jpeg->setComment('Taken at 123 Secret Street');
+		$jpeg->save($source = $this->writeSource('commented.jpg', ''));
+		$metaData = $this->newMetaData($source, ['MetaDataPreserve' => 'None']);
+		self::assertTrue($metaData->getNeedsWrite());
+		self::assertStringNotContainsString('Secret Street', $metaData->writeImageBytes(file_get_contents($source), null, false), 'The JPEG comment is removed.');
+
+		$png = TPNG::fromImage(static::createImage());
+		foreach (['tEXt' => "Author\0Secret Author", 'zTXt' => "Comment\0\0" . gzcompress('Secret Comment'), 'iTXt' => "Title\0\0\0\0\0Secret Title"] as $type => $data) {
+			$png->addChunk(new TImageChunk($type, strlen($data), 0, $data));
+		}
+		$png->save($source = $this->writeSource('text.png', ''));
+		$metaData = $this->newMetaData($source, ['MetaDataPreserve' => 'None']);
+		self::assertTrue($metaData->getNeedsWrite(), 'A PNG with only text chunks is rewritten.');
+		$published = TPNG::fromString($metaData->writeImageBytes(file_get_contents($source), null, false));
+		$types = array_map(fn (TImageChunk $chunk) => $chunk->getType(), $published->getChunks());
+		self::assertSame([], array_intersect(['tEXt', 'zTXt', 'iTXt'], $types), 'The text chunks are removed.');
+
+		$metaData = $this->newMetaData($source, ['MetaDataPreserve' => 'EXIF']);
+		self::assertFalse($metaData->getNeedsWrite(), 'Only None removes the text chunks.');
+	}
+
+	public function testWriteFailureThrowsWhenMetaDataIsRemoved(): void
+	{
+		$source = $this->writeMetaJpeg();
+		self::assertSame('not an image', $this->newMetaData($source)->writeImageBytes('not an image'), 'Without removing metadata, the bytes publish unchanged.');
+		self::assertFalse($this->newMetaData($source)->writeMetaData($text = $this->writeSource('text.jpg', 'not an image')));
+
+		try {
+			$this->newMetaData($source, ['Scrub' => 'Location'])->writeImageBytes('not an image');
+			self::fail('A scrub that cannot be written throws.');
+		} catch (TIOException $e) {
+			self::assertStringContainsString('metadata_write_failed', $e->getErrorCode());
+		}
+
+		$this->expectException(TIOException::class);
+		$this->newMetaData($source, ['MetaDataPreserve' => 'XMP'])->writeMetaData($text);
+	}
+
+	public function testScrubAuthorRemovesTheFaceRegions(): void
+	{
+		$packet = '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+			. '<rdf:Description rdf:about="" xmlns:mwg-rs="http://www.metadataworkinggroup.com/schemas/regions/" xmlns:MP="http://ns.microsoft.com/photo/1.2/"'
+			. ' xmlns:MPRI="http://ns.microsoft.com/photo/1.2/t/RegionInfo#" xmlns:MPReg="http://ns.microsoft.com/photo/1.2/t/Region#" xmlns:dc="http://purl.org/dc/elements/1.1/">'
+			. '<mwg-rs:Regions><rdf:Description><mwg-rs:RegionList><rdf:Bag><rdf:li><rdf:Description mwg-rs:Name="Mwg Face Name" mwg-rs:Type="Face"/></rdf:li></rdf:Bag></mwg-rs:RegionList></rdf:Description></mwg-rs:Regions>'
+			. '<MP:RegionInfo><rdf:Description><MPRI:Regions><rdf:Bag><rdf:li><rdf:Description MPReg:PersonDisplayName="Mp Face Name"/></rdf:li></rdf:Bag></MPRI:Regions></rdf:Description></MP:RegionInfo>'
+			. '<dc:format>image/jpeg</dc:format>'
+			. '</rdf:Description></rdf:RDF></x:xmpmeta>';
+		$jpeg = TJPEG::fromImage(static::createImage(), 90);
+		$jpeg->setXmpText($packet);
+		$jpeg->save($source = $this->writeSource('faces.jpg', ''));
+		$bytes = file_get_contents($source);
+
+		$kept = $this->newMetaData($source, ['Scrub' => 'Location'])->writeImageBytes($bytes, null, false);
+		self::assertStringContainsString('Mwg Face Name', $kept, 'A Location scrub keeps the regions.');
+
+		foreach (['Author', 'Identity', 'All'] as $scrub) {
+			$scrubbed = $this->newMetaData($source, ['Scrub' => $scrub])->writeImageBytes($bytes, null, false);
+			self::assertStringNotContainsString('Mwg Face Name', $scrubbed, "Scrub=$scrub removes the MWG regions.");
+			self::assertStringNotContainsString('Mp Face Name', $scrubbed, "Scrub=$scrub removes the Microsoft Photo regions.");
+		}
+		self::assertSame('image/jpeg', TImageFile::fromString($scrubbed)->getXMP()->getProperty(TXMP::NS_DC, 'format'), 'The other XMP properties stay.');
+	}
+
+	public function testTiffEXIFFollowsMetaDataPreserve(): void
+	{
+		$tiff = TTIFF::fromImage(static::createImage());
+		$tiff->getEXIF()->setValueByName('Artist', 'Tiff Artist');
+		$tiff->getEXIF()->setLatitude(45.5);
+		$tiff->save($source = $this->writeSource('scan.tif', ''));
+		$bytes = file_get_contents($source);
+
+		$none = TImageFile::fromString($this->newMetaData($source, ['MetaDataPreserve' => 'None'])->writeImageBytes($bytes, null, false));
+		self::assertNull($none->getEXIF()->getValueByName('Artist'), 'The TIFF EXIF tags are removed.');
+		self::assertNull($none->getEXIF()->getLatitude());
+		self::assertSame([40, 20], [$none->getWidth(), $none->getHeight()], 'The raster tags stay.');
+		self::assertNotFalse($none->getImage());
+
+		$metaData = $this->newMetaData($this->writeMetaJpeg('gps.jpg', ['gps' => true]), ['Scrub' => 'Location']);
+		$encoded = TTIFF::fromImage(static::createImage(20, 10))->toBinary();
+		$published = TImageFile::fromString($metaData->writeImageBytes($encoded, static::createImage(20, 10)));
+		self::assertInstanceOf(TTIFF::class, $published);
+		self::assertSame('Ann Author', $published->getEXIF()->getValueByName('Artist'), 'The kept EXIF is written into a new TIFF.');
+		self::assertNull($published->getEXIF()->getLatitude(), 'The scrub applies to it.');
+		self::assertSame([20, 10], [$published->getWidth(), $published->getHeight()]);
 	}
 }

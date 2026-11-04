@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web;
@@ -55,11 +55,19 @@ use Prado\Web\Assets\TTarAsset;
  * The published location is computed from the asset's publish path
  * ({@see \Prado\Web\Assets\TAsset::getAssetPublishFilePath}), so a behavior that converts
  * an image to a new format or fingerprints its name changes the published file name and URL.
+ * When the renamed file name is the name of another file in the asset's source directory,
+ * e.g. "logo.jpg" converted to "logo.png" beside a "logo.png", the asset publishes as its
+ * own name with the new extension, "logo.jpg.png" ({@see collisionFreeName}). The other
+ * file keeps its name.
  *
  * With {@see setLinkAssets LinkAssets}, a file asset is symlinked to its source only
  * when publishing it would not change it: its published file name is its source file
- * name and it has no `onProcessAsset` handlers. Any other asset is written, because a
- * link would serve the unprocessed source.
+ * name, it is a pass-through ({@see \Prado\Web\Assets\TAsset::getIsPassThrough}), and it
+ * has no `onProcessAsset` handlers. Any other asset is written, because a link would
+ * serve the unprocessed source; a link published before replaces itself with the file.
+ * Such a processed asset is always written to a temporary file and renamed into place,
+ * so the unprocessed bytes are never visible at the destination, even when
+ * {@see setAtomic Atomic} is off.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @since 0.1.0
@@ -81,8 +89,12 @@ class TPublishingManager extends TAssetManager
 	/** @var array<string, IAsset> the published assets, keyed by source path. */
 	private array $_publishedAssets = [];
 
-	/** @var array<string, string> the published URLs of assets, keyed by asset class, path, and options. */
+	/** @var array<string, array{0:IAsset, 1:string}> the published assets and URLs, keyed by asset class,
+	 * path, and options, and by the asset object for an object publish. The asset is held so its id is not reused. */
 	private array $_assetUrls = [];
+
+	/** @var ?bool the `atomic` option of the directory being copied, null for the Atomic property. */
+	private ?bool $_directoryAtomic = null;
 
 	/** @var array<string, true> the published list keys last written by an asset object, which a string path does not take. */
 	private array $_assetListed = [];
@@ -284,7 +296,12 @@ class TPublishingManager extends TAssetManager
 	 *
 	 * The asset cache is keyed by the asset class and path, separately from the published
 	 * list of {@see getPublished}, so a path published as a string and as an asset object
-	 * of another class do not share an entry.
+	 * of another class do not share an entry. An asset object is keyed by the object too,
+	 * so another object of the same class and path, with other behaviors or handlers, is
+	 * published itself.
+	 *
+	 * A directory asset whose source is the BasePath or one of its parents is rejected,
+	 * whether it is an asset object or a path its behaviors rewrite ({@see assertNotBasePath}).
 	 *
 	 * With a $destination, the asset publishes to that file path rather than its hashed
 	 * location, as a file of a published directory does: a rename by its behaviors is
@@ -297,7 +314,8 @@ class TPublishingManager extends TAssetManager
 	 *   or null for the asset's.
 	 * @param bool $checkModification whether a published file older than the asset is
 	 *   republished even in performance mode, as for an asset object.
-	 * @throws TInvalidDataValueException when the asset file path is empty or invalid.
+	 * @throws TInvalidDataValueException when the asset file path is empty or invalid, or
+	 *   a directory source is the BasePath or one of its parents.
 	 * @return string the published URL, or '' when publishing is cancelled.
 	 */
 	public function routeAsset(IAsset $asset, $checkTimestamp = false, array $options = [], ?string $destination = null, ?string $sourcePath = null, bool $checkModification = false): string
@@ -311,14 +329,19 @@ class TPublishingManager extends TAssetManager
 			return '';
 		}
 		$target['callbackSource'] = $sourcePath;
-		$cacheKey = $destination === null ? $this->publishCacheKey(get_class($asset) . ':' . $target['key'], $options) : null;
+		$cacheKey = null;
+		if ($destination === null) {
+			$object = $checkModification ? '#' . spl_object_id($asset) . ':' : '';
+			$cacheKey = $this->publishCacheKey(get_class($asset) . $object . ':' . $target['key'], $options);
+		}
 		if ($cacheKey !== null && isset($this->_assetUrls[$cacheKey])) {
-			$url = $this->_assetUrls[$cacheKey];
+			$url = $this->_assetUrls[$cacheKey][1];
 		} else {
 			$src = $this->assetSourcePath($asset);
 			if ($asset instanceof TTarAsset) {
 				$url = $this->publishTarAsset($asset, $target, $checkTimestamp, $options);
 			} elseif ($target['isDir'] && $src !== null && is_dir($src)) {
+				$this->assertNotBasePath($src, $target['source']);
 				$url = $this->publishAssetDirectory($asset, $src, $target, $checkTimestamp, $options);
 			} elseif ($target['isDir']) {
 				$url = $this->publishGeneratedDirectory($asset, $target, $checkTimestamp, $options);
@@ -331,7 +354,7 @@ class TPublishingManager extends TAssetManager
 			}
 			$this->_publishedAssets[$target['source']] = $asset;
 			if ($cacheKey !== null) {
-				$this->_assetUrls[$cacheKey] = $url;
+				$this->_assetUrls[$cacheKey] = [$asset, $url];
 				if ($checkModification) {
 					// An asset object is listed in the published list as TAssetManager lists a virtual asset,
 					// without taking the entry of a string path, which instances its own asset class.
@@ -352,7 +375,10 @@ class TPublishingManager extends TAssetManager
 
 	/**
 	 * Instances a string path as an asset. The path is made absolute, checked not to be
-	 * the BasePath or one of its parents, and routed through {@see onDiscoverClass}.
+	 * the BasePath or one of its parents, and routed through {@see onDiscoverClass}. The
+	 * asset is instanced from the resolved path; a {@see \Prado\Web\Assets\TAsset} keeps
+	 * the path as given in its {@see \Prado\Web\Assets\TAsset::getAssetGivenFilePath
+	 * AssetGivenFilePath}, so a blocker tests the name a symbolic link is reached by.
 	 * @param IAsset|string $asset the path, or an asset returned as-is.
 	 * @throws TInvalidDataValueException when the path is empty, or is the BasePath or
 	 *   one of its parents.
@@ -382,8 +408,13 @@ class TPublishingManager extends TAssetManager
 			throw new TInvalidDataTypeException('publishingmanager_invalid_class', $class);
 		}
 		$instance = new $class($discovered);
-		if ($this->_cacheAssetPublishFilePath && $instance instanceof TAsset) {
-			$instance->setCachePublishFilePath(true);
+		if ($instance instanceof TAsset) {
+			if ($this->_cacheAssetPublishFilePath) {
+				$instance->setCachePublishFilePath(true);
+			}
+			if (($given = TAsset::virtualpath($asset)) !== $discovered) {
+				$instance->setAssetGivenFilePath($given);
+			}
 		}
 		return $instance;
 	}
@@ -547,7 +578,9 @@ class TPublishingManager extends TAssetManager
 	/**
 	 * Resolves the published target of an asset. For an {@see IAsset}, the location is
 	 * computed from its publish path ({@see assetPaths}); a bare {@see IPublishable}
-	 * resolves as in TAssetManager.
+	 * resolves as in TAssetManager. A tar archive without a checksum file publishes to the
+	 * hashed directory of the archive path itself, so archives in one folder do not share
+	 * a directory.
 	 * @param IPublishable $asset the asset to resolve.
 	 * @throws TInvalidDataValueException when the asset file path is empty or invalid.
 	 * @return ?array null when publishing is cancelled; otherwise the keys vpath, isDir,
@@ -561,6 +594,11 @@ class TPublishingManager extends TAssetManager
 			return $target;
 		}
 		$source = rtrim($paths[0], '/\\');
+		if ($asset instanceof TTarAsset && $target['isDir'] && $asset->getMd5FilePath() === null && is_file($target['vpath'])) {
+			// The directory of an archive without a checksum file is keyed by the archive
+			// itself; TAssetManager::hash reduces a file path to its folder.
+			$target = array_merge($target, $this->publishedLocation($target['vpath'] . DIRECTORY_SEPARATOR, true, $target['fileName']));
+		}
 		$target['source'] = $source;
 		$target['key'] = $source === $target['vpath'] ? $target['vpath'] : $source . '>' . $target['vpath'];
 		return $target;
@@ -583,8 +621,37 @@ class TPublishingManager extends TAssetManager
 		if (!($asset instanceof IAsset)) {
 			return parent::virtualAssetPath($asset);
 		}
-		$paths = $this->assetPaths($asset);
-		return $paths === null ? null : $paths[1];
+		if (($paths = $this->assetPaths($asset)) === null) {
+			return null;
+		}
+		[$source, $path] = $paths;
+		if (in_array(substr($path, -1), ['/', '\\'], true)) {
+			return $path;
+		}
+		$name = static::collisionFreeName(dirname($path), basename($path), basename(rtrim($source, '/\\')), $this->assetSourcePath($asset));
+		return dirname($path) . DIRECTORY_SEPARATOR . $name;
+	}
+
+	/**
+	 * The name a renamed file publishes under in a directory. When the rename gives the
+	 * name of another file present in the source directory (e.g. "logo.jpg" converted to
+	 * "logo.png" beside a "logo.png"), the file publishes as its own name with the new
+	 * extension ("logo.jpg.png"), so it does not overwrite the other file's publish.
+	 * Otherwise, the renamed name is kept.
+	 * @param string $directory the source directory the file is published from.
+	 * @param string $publishName the renamed file name.
+	 * @param string $ownName the file's own name in the directory.
+	 * @param ?string $source the file's real source path, which is not another file, or null.
+	 * @return string the file name to publish under.
+	 */
+	public static function collisionFreeName(string $directory, string $publishName, string $ownName, ?string $source = null): string
+	{
+		if ($publishName === $ownName || !file_exists($other = $directory . DIRECTORY_SEPARATOR . $publishName)
+			|| ($source !== null && realpath($other) === realpath($source))) {
+			return $publishName;
+		}
+		$extension = pathinfo($publishName, PATHINFO_EXTENSION);
+		return $extension === '' ? $publishName : $ownName . '.' . $extension;
 	}
 
 	/**
@@ -592,7 +659,9 @@ class TPublishingManager extends TAssetManager
 	 * destination's directory, with the file name of the asset's publish path.
 	 * When the directory entry ($sourcePath) is a symbolic link to the asset's source, the
 	 * asset's rename is applied to the entry's name ({@see renamedFileName}); otherwise,
-	 * as for a substituted or virtualized source, the file takes its publish name.
+	 * as for a substituted or virtualized source, the file takes its publish name. A
+	 * renamed file taking the name of another file in the directory publishes as
+	 * {@see collisionFreeName}.
 	 * @param IAsset $asset the asset.
 	 * @param string $destination the destination file path.
 	 * @param ?string $sourcePath the directory entry the asset was instanced from, or null.
@@ -611,6 +680,10 @@ class TPublishingManager extends TAssetManager
 		$fileName = ($sourcePath !== null && basename($sourcePath) !== $sourceName && realpath($sourcePath) === rtrim($source, '/\\'))
 			? static::renamedFileName(basename($sourcePath), $sourceName, $publishName)
 			: $publishName;
+		if (!$isDir) {
+			$entryName = $sourcePath !== null ? basename($sourcePath) : $sourceName;
+			$fileName = static::collisionFreeName($sourcePath !== null ? dirname($sourcePath) : dirname($source), $fileName, $entryName, $this->assetSourcePath($asset));
+		}
 		$dstDir = dirname($destination);
 		$dst = $dstDir . DIRECTORY_SEPARATOR . $fileName;
 		$basePath = $this->getBasePathDirect();
@@ -663,11 +736,13 @@ class TPublishingManager extends TAssetManager
 
 	/**
 	 * Publishes a tar archive asset as TAssetManager publishes a tar file: the archive is
-	 * extracted when the published checksum file (or completion marker) is missing or
-	 * older than the archive's checksum, when forced, or when the timestamp is checked or
-	 * outside performance mode and the checksum is newer. The extraction settings the
-	 * asset leaves null come from the options, then the manager's Atomic, DirMode, and
-	 * FileMode.
+	 * extracted when the completion marker, keyed by the checksum file or else the archive
+	 * ({@see \Prado\Web\Assets\TTarAsset::getExtractedMarkerSource}), is missing or older
+	 * than the archive's checksum, when forced, or when the timestamp is checked or outside
+	 * performance mode and the checksum is newer. The marker is written only when the
+	 * asset's publish succeeds, so a cancelled publish is extracted again later. The
+	 * extraction settings the asset leaves null come from the options, then the manager's
+	 * Atomic, DirMode, and FileMode.
 	 * @param TTarAsset $asset the archive asset.
 	 * @param array $target the target from {@see virtualAssetTarget}.
 	 * @param bool $checkTimestamp whether to check the modification time.
@@ -683,8 +758,7 @@ class TPublishingManager extends TAssetManager
 			if ($forceCopy || !is_file($sentinel) || @filemtime($sentinel) < (int) $asset->getAssetModificationDate()) {
 				Prado::trace("Publishing tar archive {$target['source']} to $dst", TPublishingManager::class);
 				$asset->applyPublishingOptions($options + ['atomic' => $this->getAtomic(), 'dirMode' => $this->getDirMode(), 'fileMode' => $this->getFileMode()]);
-				$asset->publish($dst);
-				if (is_dir($dst)) {
+				if ($asset->publish($dst) !== false && is_dir($dst)) {
 					@touch($sentinel);
 				}
 			}
@@ -729,7 +803,8 @@ class TPublishingManager extends TAssetManager
 	 * Publishes a generated directory asset, which populates the directory itself, as
 	 * TAssetManager publishes a virtual directory: it is published when not yet complete
 	 * (its completion marker, when atomic), when the timestamp is checked, when forced,
-	 * when the directory is older than the asset, or outside performance mode.
+	 * when the directory is older than the asset, or outside performance mode. The
+	 * completion marker is written only when the asset's publish succeeds.
 	 * @param IAsset $asset the directory asset.
 	 * @param array $target the target from {@see virtualAssetTarget}.
 	 * @param bool $checkTimestamp whether to check the modification time.
@@ -750,8 +825,7 @@ class TPublishingManager extends TAssetManager
 				@chmod($dst, $dirMode);
 			}
 			Prado::trace("Publishing generated directory {$target['vpath']} to $dst", TPublishingManager::class);
-			$asset->publish($dst);
-			if ($marker !== null && is_dir($dst)) {
+			if ($asset->publish($dst) !== false && $marker !== null && is_dir($dst)) {
 				@touch($marker);
 			}
 		}
@@ -760,8 +834,9 @@ class TPublishingManager extends TAssetManager
 
 	/**
 	 * Publishes a file asset: the `only`/`except` patterns are matched against the
-	 * source file name, and the asset is produced when it is not yet published, when the
-	 * timestamp is checked, when forced, or outside performance mode.
+	 * source file name, and the asset is produced when it is not yet published or is
+	 * published as a symbolic link, when the timestamp is checked, when forced, or outside
+	 * performance mode.
 	 * @param IAsset $asset the file asset.
 	 * @param ?string $src the source file path, or null for a generated asset.
 	 * @param array $target the target from {@see virtualAssetTarget}.
@@ -779,7 +854,7 @@ class TPublishingManager extends TAssetManager
 		$caseSensitive = $options['caseSensitive'] ?? $this->getCaseSensitive();
 		$forceCopy = $options['forceCopy'] ?? $this->getForceCopy();
 		if ($this->matchFilePattern(basename($src ?? $target['vpath']), $only, $except, $caseSensitive)
-			&& (!is_file($dst) || $checkTimestamp || $forceCopy || $this->getApplication()->getMode() !== TApplicationMode::Performance)) {
+			&& (!is_file($dst) || is_link($dst) || $checkTimestamp || $forceCopy || $this->getApplication()->getMode() !== TApplicationMode::Performance)) {
 			$this->produceAsset($asset, $src, $dst, $options, $target['callbackSource'] ?? null);
 		}
 		$url = $target['url'];
@@ -793,9 +868,13 @@ class TPublishingManager extends TAssetManager
 	 * Writes a file asset to its destination. The `beforeCopy` callback may cancel it.
 	 * A linkable asset (see {@see isAssetLinkable}) is symlinked to its source when
 	 * {@see getLinkAssets LinkAssets} is on. Otherwise the asset is written by
-	 * {@see IPublishable::publish} when forced, when the destination is missing, or when
-	 * the destination is older than the asset, through {@see writeAtomic} when atomic.
-	 * The `afterCopy` callback runs last, and the {@see getFileMode FileMode} is applied.
+	 * {@see IPublishable::publish} when forced, when the destination is missing or is a
+	 * symbolic link, or when the destination is older than the asset. The write goes
+	 * through {@see writeAtomic} when atomic, and always for an asset that processes its
+	 * source ({@see isAssetUnchanged}); a pass-through asset is copied in place when not
+	 * atomic. A publish that returns false or throws publishes nothing: the temporary or
+	 * partial file is removed. The `afterCopy` callback runs last, and the
+	 * {@see getFileMode FileMode} is applied.
 	 * @param IAsset $asset the asset to write.
 	 * @param ?string $src the source file path, or null for a generated asset.
 	 * @param string $dst the destination file path.
@@ -830,16 +909,26 @@ class TPublishingManager extends TAssetManager
 					}
 				}
 			}
-		} elseif ($forceCopy || !is_file($dst) || @filemtime($dst) < (int) $asset->getAssetModificationDate()) {
+		} elseif ($forceCopy || is_link($dst) || !is_file($dst) || @filemtime($dst) < (int) $asset->getAssetModificationDate()) {
 			Prado::trace("Publishing asset $callbackSrc to $dst", TPublishingManager::class);
-			if ($options['atomic'] ?? $this->getAtomic()) {
-				$this->writeAtomic($dst, fn ($tmp) => $asset->publish($tmp));
+			if (is_link($dst)) {
+				@unlink($dst);	// a link to the source is replaced, not written through
+			}
+			if (($options['atomic'] ?? $this->getAtomic()) || !$this->isAssetUnchanged($asset)) {
+				$this->writeAtomic($dst, function ($tmp) use ($asset) {
+					if ($asset->publish($tmp) === false && (is_file($tmp) || is_link($tmp))) {
+						@unlink($tmp);	// a failed publish is not moved into place
+					}
+				});
 			} else {
 				try {
-					$asset->publish($dst);
+					$published = $asset->publish($dst);
 				} catch (\Throwable $e) {
 					@unlink($dst);	// a partially processed file must not look published
 					throw $e;
+				}
+				if ($published === false && (is_file($dst) || is_link($dst))) {
+					@unlink($dst);
 				}
 			}
 			$fileMode = $this->getFileMode();
@@ -865,10 +954,20 @@ class TPublishingManager extends TAssetManager
 	 */
 	protected function isAssetLinkable(IAsset $asset, string $src, string $dst): bool
 	{
-		if (basename($src) !== basename($dst) || ($asset instanceof TAsset && !$asset->getIsPassThrough())) {
-			return false;
-		}
-		return !($asset instanceof TComponent) || !$asset->hasEventHandler('onProcessAsset');
+		return basename($src) === basename($dst) && $this->isAssetUnchanged($asset);
+	}
+
+	/**
+	 * Whether publishing an asset writes its source unchanged: it is a
+	 * {@see \Prado\Web\Assets\TAsset} pass-through
+	 * ({@see \Prado\Web\Assets\TAsset::getIsPassThrough}) without `onProcessAsset`
+	 * handlers. Another {@see IAsset} is taken to process its source.
+	 * @param IAsset $asset the asset.
+	 * @return bool whether the asset publishes its source unchanged.
+	 */
+	protected function isAssetUnchanged(IAsset $asset): bool
+	{
+		return $asset instanceof TAsset && $asset->getIsPassThrough() && !$asset->hasEventHandler('onProcessAsset');
 	}
 
 	/**
@@ -891,14 +990,40 @@ class TPublishingManager extends TAssetManager
 	}
 
 	/**
+	 * Copies a directory as {@see TAssetManager::copyDirectory} does. The `atomic` option
+	 * is carried to the files of the directory, which {@see TAssetManager::copyDirectory}
+	 * does not pass to {@see copyDirectoryFile}.
+	 * @param string $src the source directory.
+	 * @param string $dst the destination directory.
+	 * @param array $options the publishing options.
+	 * @param ?string $basePath @internal the root source directory.
+	 * @param array $visited @internal the real paths already entered.
+	 */
+	public function copyDirectory($src, $dst, $options = [], $basePath = null, &$visited = [])
+	{
+		$atomic = $this->_directoryAtomic;
+		if (array_key_exists('atomic', $options) && $options['atomic'] !== null) {
+			$this->_directoryAtomic = (bool) $options['atomic'];
+		}
+		try {
+			parent::copyDirectory($src, $dst, $options, $basePath, $visited);
+		} finally {
+			$this->_directoryAtomic = $atomic;
+		}
+	}
+
+	/**
 	 * Publishes one file of a directory copy as an asset, in place of the
 	 * {@see TAssetManager::copyDirectoryFile} copy. The `only`/`except` patterns match the
 	 * path relative to the published root, as they do for a copy; the file is then
 	 * instanced by {@see ensureAsset} and published by {@see routeAsset} to its place in
-	 * the directory, under its name with its behaviors' rename applied, and written
-	 * atomically when {@see getAtomic Atomic}. A renamed file is also published unprocessed
-	 * under its own name when {@see getPublishOriginalNames PublishOriginalNames}. The copy
-	 * callbacks receive the file's path in the source directory.
+	 * the directory, under its name with its behaviors' rename applied. It is written as
+	 * {@see produceAsset} writes it: atomically when the `atomic` option of the directory
+	 * publish, or else {@see getAtomic Atomic}, is on, and always when it processes its
+	 * source. A renamed file is also published unprocessed under its own name when
+	 * {@see getPublishOriginalNames PublishOriginalNames}. The copy callbacks receive the
+	 * file's path in the directory, which the asset keeps as its
+	 * {@see \Prado\Web\Assets\TAsset::getAssetGivenFilePath AssetGivenFilePath}.
 	 *
 	 * The directory walk itself is {@see TAssetManager::copyDirectory}: the
 	 * {@see TAssetManager::PATH_COPY_EXCEPTIONS} and the completion markers are skipped,
@@ -919,6 +1044,10 @@ class TPublishingManager extends TAssetManager
 			return;
 		}
 		// The asset applies its own naming; the directory patterns are already matched.
-		$this->routeAsset($this->ensureAsset($srcPath), true, ['only' => null, 'except' => null] + $options, $dstPath, $srcPath);
+		$options = ['only' => null, 'except' => null] + $options;
+		if (!isset($options['atomic']) && $this->_directoryAtomic !== null) {
+			$options['atomic'] = $this->_directoryAtomic;
+		}
+		$this->routeAsset($this->ensureAsset($srcPath), true, $options, $dstPath, $srcPath);
 	}
 }

@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors\Filters;
@@ -435,7 +435,53 @@ class TTextImagerFilterTest extends PublishingTestCase
 
 		$image = static::render($filter);
 		self::assertNotNull(static::colorBounds($image, 0x0000FF));
-		self::assertSame(realpath(dirname(static::ttFont())), getenv('GDFONTPATH'));
+		self::assertSame($this->_fontPath, getenv('GDFONTPATH'), 'The process environment is left alone.');
+	}
+
+	public function testFontsOutsideTheNamespace(): void
+	{
+		// Regression: an unknown namespace gave a path from the root, and ".." left the namespace.
+		static::requireFreeType();
+		Prado::setPathOfAlias('TextImagerFilterTestSrc', $this->srcDir);
+		$image = static::createImage();
+		$up = str_repeat('..' . DIRECTORY_SEPARATOR, substr_count(realpath($this->srcDir), DIRECTORY_SEPARATOR));
+		$cases = [
+			'GD font from the root' => [['GDFont' => ltrim(realpath(static::dataDir() . '/Teletext_6x10_LE.gdf'), '/'), 'FontNamespace' => 'NoSuchTextFilterAlias'], 'textimagerfilter_bad_font_namespace'],
+			'GD font up a directory' => [['GDFont' => '../Teletext_6x10_LE.gdf', 'FontNamespace' => static::DATA_ALIAS . '.BlackChancery', 'VerifyGDFont' => false], 'textimagerfilter_font_outside_namespace'],
+			'TrueType font up to the root' => [['TTFont' => $up . ltrim(realpath(static::ttFont()), '/'), 'FontNamespace' => 'TextImagerFilterTestSrc'], 'textimagerfilter_font_outside_namespace'],
+		];
+		foreach ($cases as $case => [$properties, $errorCode]) {
+			$filter = static::newFilter(['Text' => 'Hi', 'TextColor' => '#0000FF'] + $properties);
+			static::assertErrorCode(fn () => $filter->filterImage($image), $errorCode);
+		}
+		self::assertNull(static::colorBounds($image, 0x0000FF), 'Nothing is drawn.');
+
+		$filter = static::newFilter(['Text' => 'Hi', 'TTFont' => '..' . DIRECTORY_SEPARATOR . basename(static::ttFont()), 'FontNamespace' => static::DATA_ALIAS . '.BlackChancery.NoSuchDirectory']);
+		static::assertErrorCode(fn () => $filter->filterImage($image), 'textimagerfilter_bad_font_namespace');
+		$filter = static::newFilter(['Text' => 'Hi', 'TTFont' => 'BlackChancery' . DIRECTORY_SEPARATOR . 'missing', 'FontNamespace' => static::DATA_ALIAS]);
+		self::assertFalse($filter->filterImage($image), 'A font missing from the namespace is not rendered.');
+	}
+
+	public function testTheFontSizeIsLimited(): void
+	{
+		// Regression: a TTFontSize of 20000 rendered glyphs of over 26000 pixels a side.
+		static::requireFreeType();
+		$image = static::createImage();
+		$filter = static::newFilter(['Text' => 'Hi', 'TTFont' => static::ttFont(), 'TTFontSize' => 20000]);
+		static::assertErrorCode(fn () => $filter->filterImage($image), 'imagerfilter_output_too_large', TInvalidDataValueException::class);
+
+		// 12 points at 96 dots per inch is an em square of 16 pixels.
+		$filter = static::newFilter(['Text' => 'Hi', 'TTFont' => static::ttFont(), 'TTFontSize' => 12, 'MaximumOutputPixels' => 256, 'TextX' => 10, 'TextY' => 50]);
+		self::assertTrue($filter->filterImage($image), 'An em square at the limit is rendered.');
+		$filter->setTTFontSize(13);
+		static::assertErrorCode(fn () => $filter->filterImage($image), 'imagerfilter_output_too_large', TInvalidDataValueException::class);
+	}
+
+	public function testTheTextZeroIsRendered(): void
+	{
+		// Regression: the text "0" was taken as no text.
+		$image = static::render(static::newFilter(['Text' => '0', 'TextColor' => '#0000FF']));
+		self::assertNotNull(static::colorBounds($image, 0x0000FF));
 	}
 
 	public function testBadTrueTypeFont(): void

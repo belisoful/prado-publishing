@@ -5,13 +5,15 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors\Filters;
 
 use Prado\Exceptions\TInvalidDataValueException;
+use Prado\IO\Image\TImageGraphicsMode;
 use Prado\TPropertyValue;
+use Prado\Web\Assets\Behaviors\TAssetImagerBase;
 use Prado\Web\Assets\TAssetEventParameter;
 
 /**
@@ -44,9 +46,11 @@ use Prado\Web\Assets\TAssetEventParameter;
  *                                           Imagick weighs the channels by Rec.709 and GD
  *                                           by Rec.601, so a saturated color differs by
  *                                           up to ~22/255; a muted color is within 1.
- * Brightness    brightnessContrastImage()   Arg1 [-255..255] * 100 / 255 as a percent.
- *                                           Identical to GD, both add a constant.
- * Contrast      brightnessContrastImage()   -Arg1 as a percent: GD counts 100 as the
+ * Brightness    brightnessContrastImage()   Arg1 [-255..255] * 100 / 255 as a percent,
+ *                                           on the color channels only, as GD leaves the
+ *                                           alpha.  Identical to GD, both add a constant.
+ * Contrast      brightnessContrastImage()   -Arg1 as a percent, on the color channels
+ *                                           only.  GD counts 100 as the
  *                                           least contrast and -100 as the most, Imagick
  *                                           the reverse.  GD scales the distance from the
  *                                           midpoint by ((100 - Arg1) / 100)^2 while
@@ -62,7 +66,8 @@ use Prado\Web\Assets\TAssetEventParameter;
  *                                           differs by up to the offset scaled by its own
  *                                           distance from the target, ~16/255 typically.
  *                                           A non-zero alpha offset (Arg4) has no Imagick
- *                                           equivalent and runs in GD.
+ *                                           equivalent: the image is converted to GD and
+ *                                           colorized there.
  * EdgeDetect    edgeImage(1)                None.  GD biases the convolution by +127, so
  *                                           GD renders a flat area mid gray and Imagick
  *                                           renders it black.
@@ -100,11 +105,13 @@ use Prado\Web\Assets\TAssetEventParameter;
  *                                           Imagick interpolates the displaced pixel, so
  *                                           it blends the neighbors GD only swaps.  A
  *                                           list of colors to scatter (Arg3) has no
- *                                           Imagick equivalent and runs in GD.
+ *                                           Imagick equivalent: the image is converted to
+ *                                           GD and scattered there.
  * </pre>
  *
- * An effect that cannot run in Imagick returns null and the imager converts the image to
- * GD and runs {@see filterGdImage} on it.
+ * An effect that cannot run in Imagick converts the image to GD itself, runs {@see
+ * filterGdImage} on it, and leaves the changed GD image in the by-reference image; the
+ * imager keeps the image the filter leaves.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @since 0.1.0
@@ -391,8 +398,8 @@ class TFilterImagerFilter extends TBaseImagerFilter
 	 *
 	 * @param \Imagick &$image The image to filter.
 	 * @param ?TAssetEventParameter $param the publishing context.
-	 * @return ?bool Was the image changed; null when the effect has no Imagick
-	 *   equivalent and runs in GD.
+	 * @return ?bool Was the image changed; null when there is no effect, or the effect
+	 *   runs in GD and the image cannot be converted to GD.
 	 */
 	protected function filterImagickImage(&$image, ?TAssetEventParameter $param = null): ?bool
 	{
@@ -404,10 +411,10 @@ class TFilterImagerFilter extends TBaseImagerFilter
 			IMG_FILTER_GRAYSCALE => $image->transformImageColorspace(\Imagick::COLORSPACE_GRAY) &&
 				$image->transformImageColorspace(\Imagick::COLORSPACE_SRGB),
 			IMG_FILTER_BRIGHTNESS => ($level = max(-255, min(255, TPropertyValue::ensureInteger($this->getArg1())))) !== 0 &&
-				$image->brightnessContrastImage($level * 100.0 / 255.0, 0.0),
+				$image->brightnessContrastImage($level * 100.0 / 255.0, 0.0, self::colorChannels()),
 			IMG_FILTER_CONTRAST => ($level = max(-100, min(100, TPropertyValue::ensureInteger($this->getArg1())))) !== 0 &&
-				$image->brightnessContrastImage(0.0, -$level),
-			IMG_FILTER_COLORIZE => $this->colorizeImagickImage($image),
+				$image->brightnessContrastImage(0.0, -$level, self::colorChannels()),
+			IMG_FILTER_COLORIZE => $this->colorizeImagickImage($image, $param),
 			IMG_FILTER_EDGEDETECT => $image->edgeImage(1.0),
 			IMG_FILTER_EMBOSS => $image->embossImage(0.0, 1.0),
 			IMG_FILTER_GAUSSIAN_BLUR => $image->gaussianBlurImage(1.0, M_SQRT1_2),
@@ -418,9 +425,39 @@ class TFilterImagerFilter extends TBaseImagerFilter
 				static::convolveImagickImage($image, static::convolutionMatrix([
 					[1.0, 1.0, 1.0], [1.0, $weight, 1.0], [1.0, 1.0, 1.0]])),
 			IMG_FILTER_PIXELATE => $this->pixelateImagickImage($image),
-			IMG_FILTER_SCATTER => $this->scatterImagickImage($image),
+			IMG_FILTER_SCATTER => $this->scatterImagickImage($image, $param),
 			default => null, // An imagefilter() without an Imagick equivalent here.
 		};
+	}
+
+	/**
+	 * @return int The Imagick channel mask of the color channels, red, green, and blue,
+	 *   without the alpha channel that ImageMagick 7 includes by default.
+	 */
+	private static function colorChannels(): int
+	{
+		return \Imagick::CHANNEL_RED | \Imagick::CHANNEL_GREEN | \Imagick::CHANNEL_BLUE;
+	}
+
+	/**
+	 * Runs the effect in GD on an Imagick image, for an effect that has no Imagick
+	 * equivalent: the image is converted to GD, filtered by {@see filterGdImage}, and
+	 * replaced by the GD image when that changes it.
+	 *
+	 * @param \GdImage|\Imagick &$image The image to filter, replaced by the GD image.
+	 * @param ?TAssetEventParameter $param the publishing context.
+	 * @return ?bool Was the image changed; null when the image cannot be converted to GD.
+	 */
+	private function filterImagickInGd(&$image, ?TAssetEventParameter $param): ?bool
+	{
+		if (($gdImage = TAssetImagerBase::convertImage($image, TImageGraphicsMode::GD)) === false) {
+			return null;
+		}
+		$changed = $this->filterGdImage($gdImage, $param);
+		if ($changed) {
+			$image = $gdImage;
+		}
+		return $changed;
 	}
 
 	/**
@@ -444,18 +481,21 @@ class TFilterImagerFilter extends TBaseImagerFilter
 	/**
 	 * Colorizes an Imagick image, blending it toward the color of the Arg1, Arg2, and
 	 * Arg3 channel offsets by |offset| / 255 of each channel.  Imagick cannot offset the
-	 * alpha channel, so a non-zero Arg4 runs the effect in GD.
+	 * alpha channel, so a non-zero Arg4 converts the image to GD and colorizes it there.
 	 *
-	 * @param \Imagick $image The image to colorize.
-	 * @return ?bool Was the image changed; null when there is an alpha offset.
+	 * @param \GdImage|\Imagick &$image The image to colorize, replaced by a GD image when
+	 *   there is an alpha offset.
+	 * @param ?TAssetEventParameter $param the publishing context.
+	 * @return ?bool Was the image changed; null when there is an alpha offset and the
+	 *   image cannot be converted to GD.
 	 */
-	private function colorizeImagickImage(\Imagick $image): ?bool
+	private function colorizeImagickImage(&$image, ?TAssetEventParameter $param): ?bool
 	{
 		$red = max(-255, min(255, TPropertyValue::ensureInteger($this->getArg1())));
 		$green = max(-255, min(255, TPropertyValue::ensureInteger($this->getArg2())));
 		$blue = max(-255, min(255, TPropertyValue::ensureInteger($this->getArg3())));
 		if (max(-127, min(127, TPropertyValue::ensureInteger($this->getArg4()))) !== 0) {
-			return null;
+			return $this->filterImagickInGd($image, $param);
 		}
 		if ($red === 0 && $green === 0 && $blue === 0) {
 			return false;
@@ -495,17 +535,19 @@ class TFilterImagerFilter extends TBaseImagerFilter
 
 	/**
 	 * Scatters the pixels of an Imagick image within the Arg2 - Arg1 displacement of
-	 * GD's scatter.  spreadImage() cannot be restricted to a list of colors, so a
-	 * Arg3 of colors runs the effect in GD.
+	 * GD's scatter.  spreadImage() cannot be restricted to a list of colors, so an
+	 * Arg3 of colors converts the image to GD and scatters it there.
 	 *
-	 * @param \Imagick $image The image to scatter.
-	 * @return ?bool Was the image changed; false when there is no displacement and null
-	 *   when there is a list of colors.
+	 * @param \GdImage|\Imagick &$image The image to scatter, replaced by a GD image when
+	 *   there is a list of colors.
+	 * @param ?TAssetEventParameter $param the publishing context.
+	 * @return ?bool Was the image changed; false when there is no displacement, and null
+	 *   when there is a list of colors and the image cannot be converted to GD.
 	 */
-	private function scatterImagickImage(\Imagick $image): ?bool
+	private function scatterImagickImage(&$image, ?TAssetEventParameter $param): ?bool
 	{
 		if (($colors = $this->getArg3()) !== null && TPropertyValue::ensureArray($colors)) {
-			return null;
+			return $this->filterImagickInGd($image, $param);
 		}
 		$radius = TPropertyValue::ensureInteger($this->getArg2()) - TPropertyValue::ensureInteger($this->getArg1());
 		if ($radius <= 0) {

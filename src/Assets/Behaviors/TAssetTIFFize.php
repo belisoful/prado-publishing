@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -22,8 +22,10 @@ use Prado\Web\Assets\TAssetEventParameter;
  * GD has no TIFF encoder; the image is encoded by the
  * {@see https://github.com/belisoful/prado-image prado-image} TIFF container, which also
  * reads TIFF sources, so a TIFF publishes like any other image.  A TIFF carries its XMP,
- * IPTC, and ICC profile; its EXIF is the TIFF structure of the image itself and is not
- * transplanted from the source.
+ * IPTC, and ICC profile, and the kept EXIF of the source is written as the tags of its
+ * first image directory, following MetaDataPreserve and Scrub.  A TIFF has no alpha
+ * channel, so the image is flattened onto the
+ * {@see TAssetImageFilter::getBackgroundColor BackgroundColor}.
  *
  * ```xml
  * <behavior name="TIFFize" Class="Prado\Web\Assets\Behaviors\TAssetTIFFize"
@@ -45,12 +47,16 @@ class TAssetTIFFize extends TAssetImageFilter
 	 */
 	public function dyAlterAssetFilePath($filePath, $callchain = null)
 	{
-		// The file is only renamed when the image can be written in the format.
-		if (!empty($filePath) && $this->hasMatch() && $this->canEncode(IMAGETYPE_TIFF_II)) {
-			$sep = (DIRECTORY_SEPARATOR === '/') ? '\\/' : '\\\\';
-			$filePath = preg_replace('/(?<=' . $sep . ')([^' . $sep . ']*?)(\.[^' . $sep . '\.]*)?$/i', '${1}.tif', $filePath);
-		}
+		$filePath = $this->renameForConversion($filePath, IMAGETYPE_TIFF_II, 'tif');
 		return $callchain ? $callchain->dyAlterAssetFilePath($filePath) : $filePath;
+	}
+
+	/**
+	 * @return int the image type this conversion writes, IMAGETYPE_TIFF_II.
+	 */
+	protected function getConversionType(): ?int
+	{
+		return IMAGETYPE_TIFF_II;
 	}
 
 	/**

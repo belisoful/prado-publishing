@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
@@ -16,8 +16,12 @@ use Prado\IO\Image\TImageGraphics;
 use Prado\IO\Image\TImageGraphicsMode;
 use Prado\IO\Image\TPNG;
 use Prado\IO\Image\TTIFF;
+use Prado\TComponent;
 use Prado\Util\IBaseBehavior;
+use Prado\Web\Assets\Behaviors\TAssetBMPize;
 use Prado\Web\Assets\Behaviors\TAssetImageFilter;
+use Prado\Web\Assets\Behaviors\TAssetJPEGize;
+use Prado\Web\Assets\Behaviors\TAssetPNGize;
 use Prado\Web\Assets\Behaviors\TAssetPNGColorMode;
 use Prado\Web\Assets\TImageAsset;
 use Prado\Web\Tests\Fixtures\TGraphicslessImageFilter;
@@ -784,15 +788,15 @@ class TAssetImageFilterTest extends PublishingTestCase
 		$t = 0x7F000000;
 		$image = static::alphaRow();
 		self::assertTrue(TAssetImageFilter::imagePalettizeAlpha($image, $t, 0x0000FF, -1, true));
-		self::assertSame([$t, 0x7E0080, 0x00FF00, 0x0000FF, $t, 0xFFFFFF], static::row($image), 'The color is matched regardless of alpha.');
+		self::assertSame([$t, 0x7E0080, 0x00FF00, $t, $t, 0xFFFFFF], static::row($image), 'The color is matched regardless of alpha, and a fully transparent pixel is transparent.');
 
 		$image = static::alphaRow();
 		self::assertTrue(TAssetImageFilter::imagePalettizeAlpha($image, $t, 0, -1, true));
-		self::assertSame([$t, 0xFF0000, 0x00FF00, 0x0000FF, $t, 0xFFFFFF], static::row($image));
+		self::assertSame([$t, 0xFF0000, 0x00FF00, $t, $t, 0xFFFFFF], static::row($image));
 
 		$image = static::alphaRow(true);
 		self::assertTrue(TAssetImageFilter::imagePalettizeAlpha($image, $t, 0x0000FF));
-		self::assertSame([$t, 0x7E0080, 0x00FF00, 0x0000FF, 0x000000, $t], static::row($image), 'The prior transparent color is replaced.');
+		self::assertSame([$t, 0x7E0080, 0x00FF00, $t, 0x000000, $t], static::row($image), 'The prior transparent color is replaced.');
 		self::assertSame($t, imagecolortransparent($image));
 	}
 
@@ -801,18 +805,18 @@ class TAssetImageFilterTest extends PublishingTestCase
 		$t = 0x7F000000;
 		$image = static::alphaRow();
 		self::assertTrue(TAssetImageFilter::imagePalettizeAlpha($image, $t, 0x0000FF));
-		self::assertSame([$t, 0x7E0080, 0x00FF00, 0x0000FF, 0x000000, 0xFFFFFF], static::row($image), 'Only the alpha is faded onto the background.');
+		self::assertSame([$t, 0x7E0080, 0x00FF00, $t, 0x000000, 0xFFFFFF], static::row($image), 'Only the alpha is faded onto the background; a fully transparent blue is transparent.');
 		self::assertSame($t, imagecolortransparent($image), 'The transparent color is set.');
 
 		$image = static::alphaRow();
 		self::assertTrue(TAssetImageFilter::imagePalettizeAlpha($image, $t));
-		self::assertSame([$t, 0xFF0000, 0x00FF00, 0x0000FF, 0x000000, 0xFFFFFF], static::row($image), 'Without a background, the alpha is dropped.');
+		self::assertSame([$t, 0xFF0000, 0x00FF00, $t, 0x000000, 0xFFFFFF], static::row($image), 'Without a background, the alpha is dropped.');
 
 		// A numeric string equal to the prior transparent color: the prior pixels are not
 		// skipped by the strict comparison, and are set to the transparent color.
 		$image = static::alphaRow(true);
 		self::assertTrue(TAssetImageFilter::imagePalettizeAlpha($image, (string) 0x00FFFFFF));
-		self::assertSame([0, 0xFF0000, 0x00FF00, 0x0000FF, 0x000000, 0xFFFFFF], static::row($image));
+		self::assertSame([0xFFFFFF, 0xFF0000, 0x00FF00, 0xFFFFFF, 0x000000, 0xFFFFFF], static::row($image), 'The fully transparent pixels are the transparent color.');
 		self::assertSame(0xFFFFFF, imagecolortransparent($image));
 	}
 
@@ -829,7 +833,7 @@ class TAssetImageFilterTest extends PublishingTestCase
 
 		self::assertSame(0x3F3F3F3F, imagecolortransparent($image), 'The transparent color is the average of the corners.');
 		self::assertSame(0xFF0000, imagecolorat($image, 0, 0));
-		self::assertSame(0x00FF00, imagecolorat($image, 3, 3), 'Without a background, the alpha is dropped.');
+		self::assertSame(0x3F3F3F3F, imagecolorat($image, 3, 3), 'A fully transparent corner is transparent, whatever its color.');
 		self::assertSame(0x808080, imagecolorat($image, 1, 1));
 	}
 
@@ -1119,5 +1123,57 @@ class TAssetImageFilterTest extends PublishingTestCase
 	protected static function invoke($filter, string $method, ...$args)
 	{
 		return (new \ReflectionMethod($filter, $method))->invoke($filter, ...$args);
+	}
+
+	/**
+	 * @return \GdImage a 10x10 image whose left half is fully transparent white.
+	 */
+	protected static function transparentHalfImage(): \GdImage
+	{
+		$image = imagecreatetruecolor(10, 10);
+		imagealphablending($image, false);
+		imagesavealpha($image, true);
+		imagefilledrectangle($image, 0, 0, 9, 9, 0x00336699);
+		imagefilledrectangle($image, 0, 0, 4, 9, 0x7FFFFFFF);
+		return $image;
+	}
+
+	public function testTypesWithoutAlphaAreFlattenedOntoTheBackgroundColor(): void
+	{
+		$source = $this->writeImage('clear.png', 10, 10, static::transparentHalfImage());
+
+		$this->attachSavingImager(TAssetJPEGize::class, ['BackgroundColor' => '#FF0000']);
+		$jpeg = imagecreatefromjpeg($this->urlToPath($this->newManager()->publish($source)));
+		self::assertColorNear(0xFF0000, static::rgbAt($jpeg, 1, 5), 24, 'The JPEG is flattened onto the background, not black.');
+		self::assertColorNear(0x336699, static::rgbAt($jpeg, 8, 5));
+
+		TComponent::detachClassBehavior('imager', TImageAsset::class);
+		$this->attachSavingImager(TAssetBMPize::class, ['BackgroundColor' => '#FF0000']);
+		$bmp = imagecreatefrombmp($this->urlToPath($this->newManager()->publish($source)));
+		imagepalettetotruecolor($bmp);
+		self::assertSame(0xFF0000, static::rgbAt($bmp, 1, 5), 'The BMP is flattened onto the background.');
+	}
+
+	public function testAConversionWithASavingPropertyReencodes(): void
+	{
+		$source = $this->writeImage('photo.jpg', 64, 64, static::noiseImage());
+
+		$this->attachClassBehavior('imager', ['class' => TAssetJPEGize::class, 'ImageQuality' => 5], TImageAsset::class);
+		$published = $this->urlToPath($this->newManager()->publish($source));
+		self::assertLessThan(filesize($source), filesize($published), 'The ImageQuality applies to a JPEG source.');
+
+		$converter = new TAssetJPEGize();
+		self::assertFalse($converter->getReencode(), 'A conversion with the default saving properties does not re-encode.');
+		$converter->setImageQuality(75);
+		self::assertTrue($converter->getReencode());
+		$filter = new TAssetImageFilter();
+		$filter->setImageQuality(5);
+		self::assertFalse($filter->getReencode(), 'An imager keeping the type does not re-encode.');
+
+		$png = $this->writeImage('photo.png', 64, 64, static::noiseImage());
+		TComponent::detachClassBehavior('imager', TImageAsset::class);
+		$this->attachClassBehavior('imager', ['class' => TAssetPNGize::class, 'PngColorMode' => TAssetPNGColorMode::Palette, 'PaletteColors' => 16], TImageAsset::class);
+		$published = $this->urlToPath($this->newManager()->publish($png));
+		self::assertSame(3, static::pngHeader($published)['colorType'], 'The palette settings apply to a PNG source.');
 	}
 }

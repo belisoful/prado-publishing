@@ -5,11 +5,12 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors\Filters;
 
+use Prado\Exceptions\TInvalidDataValueException;
 use Prado\TComponent;
 use Prado\Util\IBaseBehavior;
 use Prado\Web\Assets\Behaviors\Filters\IBaseImagerFilter;
@@ -56,6 +57,37 @@ class TBaseImagerFilterTest extends PublishingTestCase
 		self::assertFalse($filter->getEnabled());
 		$filter->setEnabled(true);
 		self::assertTrue($filter->getEnabled());
+	}
+
+	public function testMaximumOutputPixels(): void
+	{
+		$filter = new TRecordingImagerFilter();
+		self::assertSame(TBaseImagerFilter::DEFAULT_MAXIMUM_OUTPUT_PIXELS, $filter->getMaximumOutputPixels());
+		self::assertSame(50000000, TBaseImagerFilter::DEFAULT_MAXIMUM_OUTPUT_PIXELS);
+
+		$filter->setMaximumOutputPixels('1000');
+		self::assertSame(1000, $filter->getMaximumOutputPixels());
+		$filter->setMaximumOutputPixels(-5);
+		self::assertSame(0, $filter->getMaximumOutputPixels(), 'A negative limit is none.');
+	}
+
+	public function testEnsureOutputSize(): void
+	{
+		$filter = new TRecordingImagerFilter();
+		$ensure = new \ReflectionMethod($filter, 'ensureOutputSize');
+		$filter->setMaximumOutputPixels(100);
+		$ensure->invoke($filter, 10, 10);
+		foreach ([[11, 10], [10.5, 10], [INF, 1], [NAN, 1]] as [$width, $height]) {
+			try {
+				$ensure->invoke($filter, $width, $height);
+				self::fail("An exception was expected for $width x $height.");
+			} catch (TInvalidDataValueException $e) {
+				self::assertSame('imagerfilter_output_too_large', $e->getErrorCode());
+			}
+		}
+		$filter->setMaximumOutputPixels(0);
+		$ensure->invoke($filter, 1e9, 1e9);
+		self::assertSame(0, $filter->getMaximumOutputPixels(), 'A limit of 0 checks nothing.');
 	}
 
 	public function testTheGraphicsModeFollowsTheImplementedFilters(): void

@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors;
@@ -172,8 +172,90 @@ class TAssetCacheBusterTest extends PublishingTestCase
 		$asset->attachBehavior('buster', ['class' => TAssetCacheBuster::class, 'MatchFiles' => '/\.js$/'], 10);
 		$token = hash_file('crc32b', $source);
 
-		self::assertSame($this->srcDir . "/app.js.$token.gz", $asset->getAssetPublishFilePath(), 'The ".gz" appended first does not unmatch the ".js" asset.');
-		self::assertSame($this->srcDir . "/app.js.$token.gz", $asset->asa('buster')->dyAlterAssetFilePath($source . '.gz'));
+		self::assertSame($this->srcDir . "/app.$token.js.gz", $asset->getAssetPublishFilePath(), 'The ".gz" appended first does not unmatch the ".js" asset.');
+		self::assertSame($this->srcDir . "/app.$token.js.gz", $asset->asa('buster')->dyAlterAssetFilePath($source . '.gz'));
+	}
+
+	public function testTheTokenGoesBeforeTheAssetExtensionInEitherOrder(): void
+	{
+		$source = $this->writeSource('app.js', 'js');
+		$token = hash_file('crc32b', $source);
+
+		foreach ([[5, 10], [10, 5]] as [$compressPriority, $busterPriority]) {
+			$asset = new TFileAsset($source);
+			$asset->attachBehavior('compress', ['class' => TAssetCompress::class, 'MatchFiles' => '/\.js$/'], $compressPriority);
+			$asset->attachBehavior('buster', TAssetCacheBuster::class, $busterPriority);
+
+			self::assertSame($this->srcDir . "/app.$token.js.gz", $asset->getAssetPublishFilePath(), "Compress priority $compressPriority, buster priority $busterPriority.");
+		}
+	}
+
+	public function testTheTokenFollowsTheStemOfARenamedName(): void
+	{
+		$source = $this->writeSource('LICENSE', 'x');
+		$asset = $this->bustedAsset($source);
+		$buster = $asset->asa('buster');
+		$token = hash('crc32b', 'x');
+
+		self::assertSame($this->srcDir . "/LICENSE.$token.gz", $buster->dyAlterAssetFilePath($source . '.gz'), 'An extension-less name keeps a following extension.');
+		self::assertSame($this->srcDir . "/other.$token.txt", $buster->dyAlterAssetFilePath($this->srcDir . '/other.txt'), 'A name not from the asset name gets the token before its last extension.');
+		self::assertSame($this->srcDir . "/LICENSES.$token", $buster->dyAlterAssetFilePath($this->srcDir . '/LICENSES'), 'A name only starting with the stem is not split.');
+	}
+
+	public function testPropertiesResetTheCachedPublishFilePath(): void
+	{
+		$source = $this->writeSource('app.js', 'x');
+		$token = hash('crc32b', 'x');
+		$asset = new TFileAsset($source);
+		$asset->setCachePublishFilePath(true);
+		$asset->attachBehavior('buster', TAssetCacheBuster::class);
+		$buster = $asset->asa('buster');
+		self::assertSame($this->srcDir . "/app.$token.js", $asset->getAssetPublishFilePath());
+
+		$buster->setMatchFiles('/\.css$/');
+		self::assertSame($source, $asset->getAssetPublishFilePath(), 'MatchFiles resets the cached publish path.');
+
+		$buster->setMatchFiles('');
+		$buster->setHashLength(4);
+		self::assertSame($this->srcDir . '/app.' . substr($token, 0, 4) . '.js', $asset->getAssetPublishFilePath(), 'HashLength resets the cached publish path.');
+
+		$buster->setAlgorithm('md5');
+		self::assertSame($this->srcDir . '/app.' . substr(md5('x'), 0, 4) . '.js', $asset->getAssetPublishFilePath(), 'Algorithm resets the cached publish path.');
+	}
+
+	public function testTheTokenOfAnUnchangedSourceIsKept(): void
+	{
+		$source = $this->writeSource('app.js', 'one', $mtime = time() - 60);
+		$asset = $this->bustedAsset($source);
+		$first = static::altered($asset);
+		self::assertSame($this->srcDir . '/app.' . hash('crc32b', 'one') . '.js', $first);
+
+		file_put_contents($source, 'two');
+		touch($source, $mtime);
+		self::assertSame($first, static::altered($this->bustedAsset($source)), 'A source of the same modification time and size is not hashed again.');
+
+		touch($source, $mtime + 1);
+		self::assertSame($this->srcDir . '/app.' . hash('crc32b', 'two') . '.js', static::altered($this->bustedAsset($source)), 'A new modification time hashes again.');
+
+		file_put_contents($source, 'three');
+		touch($source, $mtime + 1);
+		self::assertSame($this->srcDir . '/app.' . hash('crc32b', 'three') . '.js', static::altered($this->bustedAsset($source)), 'A new size hashes again.');
+
+		file_put_contents($source, 'four!');
+		touch($source, $mtime + 1);
+		TAssetCacheBuster::clearTokenCache();
+		self::assertSame($this->srcDir . '/app.' . hash('crc32b', 'four!') . '.js', static::altered($this->bustedAsset($source)), 'Clearing the token cache hashes again.');
+	}
+
+	public function testARecentlyModifiedSourceIsAlwaysHashed(): void
+	{
+		$source = $this->writeSource('app.js', 'one');
+		$mtime = filemtime($source);
+		static::altered($this->bustedAsset($source));
+
+		file_put_contents($source, 'two');
+		touch($source, $mtime);
+		self::assertSame($this->srcDir . '/app.' . hash('crc32b', 'two') . '.js', static::altered($this->bustedAsset($source)), 'A same-size rewrite within the same second is seen.');
 	}
 
 	public function testMatchFilesMatchesTheGivenPathWithoutAnAssetFilePath(): void

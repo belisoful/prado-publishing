@@ -7,7 +7,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Follows `pradosoft/prado` 4.4 at `master`.
+Follows `pradosoft/prado` 4.4 at `master`, and fixes the findings of a full audit.
+
+### Added
+
+- `TAssetImagerBase::MaximumPixels` (default 50 megapixels): an image that declares more pixels
+  is rejected before it is decoded (`assetimagerbase_image_too_large`), and the Imagick area
+  limit of the process is lowered to it.
+- `TBaseImagerFilter::MaximumOutputPixels` (default 50 megapixels): `Resize`, `Image`, and `Text`
+  reject a configuration that would make a larger image (`imagerfilter_output_too_large`).
+- `TAsset::AssetGivenFilePath`, the path as given before symbolic links are resolved, and
+  `TAssetBlocker::isBlockedFile()`.
+- `TResizeImagerFilter::getMaximumPixelCount()`.
 
 ### Changed
 
@@ -15,11 +26,79 @@ Follows `pradosoft/prado` 4.4 at `master`.
   now formats them with `\MessageFormatter`: a quoted placeholder is written `''{0}''`, since
   `'{0}'` renders the literal `{0}`.
 - PHP 8.2 is the minimum, the floor of the framework.
+- A processed asset is always written through a temporary file and moved into place, whatever
+  `Atomic` is; only an unchanged copy with `Atomic` off is written in place.
+- A renamed file that would take the name of another file in its folder publishes under its own
+  name with the new extension (`logo.jpg.png` beside `logo.png`).
+- A tar archive without a checksum file publishes to a directory of its own, not to the
+  directory of its folder.
+- The default `TAssetBlocker::BlockedFiles` also blocks backups (`~`, `.bak`, `.orig`, `.old`,
+  `.swp`, `.swo`, `.save`), `.php<digit>`, `.phtml`, `.phar`, `.inc`, `.sqlite`, `.sqlite3`,
+  `.db`, and `protected/data/*.xml`.
+- `TAssetCacheBuster` puts its token before the asset's own extension whatever the behavior
+  order (`app.<token>.js.gz`), and remembers each file's token while its mtime and size hold.
+- `TAssetCompress` matches `MatchFiles` against the asset file path, as `TAssetCacheBuster` does;
+  `dySetAssetFilePathPre` is removed from it.
+- `TAssetVirtualize`, `TAssetDuplicate`, and `TAssetDiscovery` replace only the first match of
+  their pattern.
+- `TAssetWebPize` with the `Preserve` fallback still runs its filters and metadata for a client
+  without WebP, keeping the image type.
+- Several matching imagers combine their privacy settings: their scrubs add up and only the
+  carriers all of them preserve are kept.
+- `MetaDataPreserve="None"` also removes comments, PNG text chunks, and data after the end of the
+  image; a scrub also removes data after the end of the image and JPEG MPF secondary images, and
+  `Author` removes XMP face regions.
+- A format conversion with a saving property set, such as `ImageQuality`, re-encodes an image
+  already in that format.
+- `TResizeImagerFilter::getMaximumPixels()` returns the value as it was set (`"1920x1080"`), a
+  string; `getMaximumPixelCount()` gives the count.
+- `TImageImagerFilter` maps `Bicubic` to Imagick's Catmull-Rom, as `TResizeImagerFilter` does.
+- Two filters with one name, or a filter `type` with a contradicting property, are configuration
+  errors.
 
 ### Fixed
 
 - `TPublishingManager` keeps a linked asset that another process created as a dangling symlink
   while it was linking, as `TAssetManager` does (`lstat()` in place of `is_file()`/`is_link()`).
+- Security and privacy:
+  - `TAssetBlocker` tests the path as given as well as the resolved one, so a hidden name that
+    is a symbolic link is blocked; tar entries a blocker would block are not extracted.
+  - `Scrub="All"` with no filter removed the EXIF of a JPEG's appended images; a TIFF ignored
+    `MetaDataPreserve`; `TAssetWebPize` skipped `Scrub` for clients without WebP; a second
+    imager's `Scrub` could be lost; a metadata write failure published the unscrubbed image.
+    Each now publishes the metadata it is configured to.
+  - The BasePath guard applies to asset objects and to paths rewritten by behaviors.
+  - Watermark and GD font files must be inside their namespace, which must exist.
+- Publishing:
+  - A `TFileAsset` subclass overriding `writeAsset()` or `publish()` is not symlinked raw; a
+    symlink is replaced once its asset gains processing.
+  - A `publish()` that returns false leaves nothing published; a cancelled tar or generated
+    directory writes no completion marker; a failed tar checksum copy leaves no temporary file.
+  - Archives without a checksum file in one folder no longer overwrite each other.
+  - A second asset object for the same path publishes itself, not the first object's URL.
+  - The per-call `atomic` option reaches the files of a published directory.
+  - `TAssetDuplicate` publishes with the asset's own manager, its documented example pattern
+    works, and its recursion guard no longer stops distinct chained duplicators.
+  - `TAssetCacheBuster` setters reset a cached publish path.
+- Images:
+  - A re-encoded or converted TIFF keeps its EXIF.
+  - A `MetaMatch` imager that renamed a virtual asset before its match failed published the
+    original format under the new extension; the image is now converted.
+  - Palette conversion keeps fully transparent pixels of any color transparent, and formats
+    without alpha are flattened onto `BackgroundColor`.
+  - Imagick `Colorize` with an alpha offset and `Scatter` with colors run in GD instead of doing
+    nothing; Imagick `Brightness`, `Contrast`, and `GammaCorrect` keep the alpha channel.
+  - `TResizeImagerFilter::MaximumPixels` no longer overflows to a 1x1 image, and a malformed
+    value throws.
+  - `TImageImagerFilter` no longer crops a row or column off a watermark it only scales.
+  - `TAutoCropImagerFilter` crops an alpha transparent background, and a crop that changes
+    nothing is no change.
+  - `TConvolutionImagerFilter` rejects a `Divisor` of 0; `TTextImagerFilter` renders `"0"` and no
+    longer sets `GDFONTPATH`.
+- Docblocks that contradicted the code: the tar completion marker, virtualization of virtual
+  assets, the `TAssetVirtualize` default pattern, and the `ImageQuality` default.
+- The test case collects garbage before it detaches class behaviors, which avoids an
+  intermittent random-order failure from Prado's weak event handler lists.
 
 ## [0.1.0] - 2026-09-22
 

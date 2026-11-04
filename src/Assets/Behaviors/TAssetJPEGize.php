@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Assets\Behaviors;
@@ -50,6 +50,11 @@ use Prado\Web\Assets\TAssetEventParameter;
  *     and with TAssetJPEGize applied to the virtual asset.
  * ```
  *
+ * Transparent pixels are flattened onto the
+ * {@see TAssetImageFilter::getBackgroundColor BackgroundColor}.  With a saving property
+ * set, such as ImageQuality, a JPEG source is re-encoded with it too
+ * ({@see TAssetImageFilter::getReencode}).
+ *
  * {@see TAssetWebPize} is widely supported, higher quality, and smaller file
  * size than JPEG and PNG.  If reduction in bandwidth is the goal,
  * consider TAssetWebPize rather than TAssetJPEGize or {@see TAssetPNGize}.
@@ -69,12 +74,16 @@ class TAssetJPEGize extends TAssetImageFilter
 	 */
 	public function dyAlterAssetFilePath($filePath, $callchain = null)
 	{
-		// The file is only renamed when the image can be written in the format.
-		if (!empty($filePath) && $this->hasMatch() && $this->canEncode(IMAGETYPE_JPEG)) {
-			$sep = (DIRECTORY_SEPARATOR === '/') ? '\\/' : '\\\\';
-			$filePath = preg_replace('/(?<=' . $sep . ')([^' . $sep . ']*?)(\.[^' . $sep . '\.]*)?$/i', '${1}.jpg', $filePath);
-		}
+		$filePath = $this->renameForConversion($filePath, IMAGETYPE_JPEG, 'jpg');
 		return $callchain ? $callchain->dyAlterAssetFilePath($filePath) : $filePath;
+	}
+
+	/**
+	 * @return int the image type this conversion writes, IMAGETYPE_JPEG.
+	 */
+	protected function getConversionType(): ?int
+	{
+		return IMAGETYPE_JPEG;
 	}
 
 	/**

@@ -5,7 +5,7 @@
  *
  * @author Brad Anderson <belisoful@icloud.com>
  * @link https://github.com/belisoful/prado-publishing
- * @license https://github.com/pradosoft/prado/blob/master/LICENSE
+ * @license https://github.com/belisoful/prado-publishing/blob/main/LICENSE
  */
 
 namespace Prado\Web\Tests\Assets\Behaviors\Filters;
@@ -117,6 +117,24 @@ class TGammaCorrectImagerFilterTest extends PublishingTestCase
 		$gd = TAssetImagerBase::convertImage($image, TImageGraphicsMode::GD);
 		self::assertInstanceOf(\GdImage::class, $gd);
 		self::assertColorNear($expected, static::rgbAt($gd, 1, 1), 2, 'Imagick corrects the gamma in the direction GD does.');
+	}
+
+	public function testImagickGammaKeepsTheAlpha(): void
+	{
+		// Regression: ImageMagick 7 corrected the alpha channel too.
+		if (!TImageGraphics::hasImagick()) {
+			self::markTestSkipped('Imagick is not installed.');
+		}
+		$filter = new TGammaCorrectImagerFilter();
+		$filter->setOutputGamma(2.2);
+		$image = new \Imagick();
+		$image->newImage(4, 4, new \ImagickPixel('rgba(200, 100, 50, 0.5)'));
+		$image->setImageFormat('png');
+
+		self::assertTrue($filter->filterImage($image));
+		$pixel = $image->getImagePixelColor(1, 1);
+		self::assertEqualsWithDelta(0.5, $pixel->getColorValue(\Imagick::COLOR_ALPHA), 0.01, 'The alpha is not corrected, as in GD.');
+		self::assertGreaterThan(100 / 255, $pixel->getColorValue(\Imagick::COLOR_GREEN), 'The colors are brightened.');
 	}
 
 	public function testHandlerFlagsTheSave(): void
