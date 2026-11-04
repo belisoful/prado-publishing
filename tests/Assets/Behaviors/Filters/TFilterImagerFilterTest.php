@@ -319,9 +319,11 @@ class TFilterImagerFilterTest extends PublishingTestCase
 
 	public function testImagickConvolutionEffects(): void
 	{
-		foreach (['EdgeDetect', 'Emboss', 'GaussianBlur', 'SelectiveBlur', 'MeanRemoval'] as $effect) {
+		// The adaptive blur of SelectiveBlur leaves the corner of the mark as it is in an
+		// ImageMagick built without HDRI, so it is read beside the edge instead.
+		foreach (['EdgeDetect' => 10, 'Emboss' => 10, 'GaussianBlur' => 10, 'SelectiveBlur' => 5, 'MeanRemoval' => 10] as $effect => $y) {
 			$gd = static::applyImagick(static::newFilter($effect), static::newImagickImage());
-			self::assertNotSame(0x3366CC, static::rgbAt($gd, 20, 10), "$effect changes the edge of the mark.");
+			self::assertNotSame(0x3366CC, static::rgbAt($gd, 20, $y), "$effect changes the edge of the mark.");
 		}
 		// The blurs and the mean removal leave a flat area; GD's +127 bias of the edge
 		// detection and the emboss has no Imagick equivalent, so those do not.
