@@ -93,7 +93,7 @@ abstract class TBaseImagerFilter extends TComponent implements IBaseImagerFilter
 	{
 		$limit = $this->getMaximumOutputPixels();
 		if ($limit && (!is_finite($pixels = (float) $width * (float) $height) || $pixels > $limit)) {
-			throw new TInvalidDataValueException('imagerfilter_output_too_large', static::class, (string) $width, (string) $height, $limit);
+			throw new TInvalidDataValueException('imagerfilter_output_too_large', static::class, $width, $height, $limit);
 		}
 	}
 

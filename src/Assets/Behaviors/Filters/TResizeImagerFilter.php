@@ -170,7 +170,7 @@ class TResizeImagerFilter extends TBaseImagerFilter
 			throw new TInvalidDataValueException('resizeimagerfilter_bad_max_pixel_format', $value);
 		}
 		if (!is_finite($width) || !is_finite($height)) {
-			throw new TInvalidDataValueException('resizeimagerfilter_bad_max_pixel_format', (string) $value);
+			throw new TInvalidDataValueException('resizeimagerfilter_bad_max_pixel_format', $value);
 		}
 		$this->_maximumPixelsWidth = max(0.0, $width);
 		$this->_maximumPixelsHeight = max(0.0, $height);
