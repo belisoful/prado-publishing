@@ -196,7 +196,6 @@ class TTextImagerFilterTest extends PublishingTestCase
 		self::assertSame('255', $filter->getTextColor());
 
 		$method = new \ReflectionMethod($filter, 'getTextColorIndex');
-		$method->setAccessible(true);
 		self::assertSame(255, $method->invoke($filter));
 		$filter->setTextColor('#3F0000FF');
 		self::assertSame(0x3F0000FF, $method->invoke($filter));

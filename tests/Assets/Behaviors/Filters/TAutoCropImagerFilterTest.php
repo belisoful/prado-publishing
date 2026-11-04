@@ -128,7 +128,6 @@ class TAutoCropImagerFilterTest extends PublishingTestCase
 	{
 		$filter = new TAutoCropImagerFilter();
 		$method = new \ReflectionMethod($filter, 'getCropColorIndex');
-		$method->setAccessible(true);
 
 		$filter->setCropColor('#3F102030');
 		self::assertSame(0x3F102030, $method->invoke($filter));
