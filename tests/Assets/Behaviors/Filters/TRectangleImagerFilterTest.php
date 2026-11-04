@@ -75,7 +75,6 @@ class TRectangleImagerFilterTest extends PublishingTestCase
 		self::assertSame('65280', $filter->getRectColor());
 
 		$method = new \ReflectionMethod($filter, 'getRectColorIndex');
-		$method->setAccessible(true);
 		self::assertSame(0x00FF00, $method->invoke($filter));
 		$filter->setRectColor('#3F102030');
 		self::assertSame(0x3F102030, $method->invoke($filter));

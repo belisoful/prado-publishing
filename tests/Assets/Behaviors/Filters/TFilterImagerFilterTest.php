@@ -120,7 +120,6 @@ class TFilterImagerFilterTest extends PublishingTestCase
 
 		$filter = new TFilterImagerFilter();
 		$property = new \ReflectionProperty($filter, '_effect');
-		$property->setAccessible(true);
 		$property->setValue($filter, 'NotAnEffect');
 		self::assertNull($filter->filterImage($image), 'An unknown effect name does nothing.');
 	}
@@ -255,7 +254,6 @@ class TFilterImagerFilterTest extends PublishingTestCase
 
 		$filter = new TFilterImagerFilter();
 		$property = new \ReflectionProperty($filter, '_effect');
-		$property->setAccessible(true);
 		$property->setValue($filter, 'NotAnEffect');
 		self::assertNull($filter->filterImage($image), 'An unknown effect name does nothing.');
 

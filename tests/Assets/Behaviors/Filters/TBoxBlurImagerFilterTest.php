@@ -139,7 +139,6 @@ class TBoxBlurImagerFilterTest extends PublishingTestCase
 	public function testBoxBlurLine(): void
 	{
 		$method = new \ReflectionMethod(TBoxBlurImagerFilter::class, 'boxBlurLine');
-		$method->setAccessible(true);
 
 		self::assertSame([0x10, 0xFF], $method->invoke(null, [0x10, 0xFF], 1), 'A box of one pixel is the line.');
 		self::assertSame([0x40, 0x40, 0x40], $method->invoke(null, [0x00, 0x00, 0xC0], 9), 'The box is limited to the line.');
