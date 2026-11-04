@@ -13,6 +13,7 @@ namespace Prado\Web\Tests;
 use PHPUnit\Framework\TestCase;
 use Prado\Prado;
 use Prado\TApplication;
+use Prado\TApplicationMode;
 use Prado\TComponent;
 use Prado\Web\Assets\Behaviors\Filters\IBaseImagerFilter;
 use Prado\Web\Assets\Behaviors\TAssetImageFilter;
@@ -84,12 +85,18 @@ abstract class PublishingTestCase extends TestCase
 	}
 
 	/**
+	 * The application defaults to Normal mode, so a created one is set to Debug, as the
+	 * framework's own tests do; a test of another mode sets the mode itself.
 	 * @return TApplication the global application, created from the framework test
 	 *   application when none exists.
 	 */
 	protected static function application(): TApplication
 	{
-		return Prado::getApplication() ?? new TApplication(dirname((new \ReflectionClass(\Prado\Test\Unit\Web\TAssetManagerTest::class))->getFileName()) . '/app');
+		if (($application = Prado::getApplication()) === null) {
+			$application = new TApplication(dirname((new \ReflectionClass(\Prado\Test\Unit\Web\TAssetManagerTest::class))->getFileName()) . '/app');
+			$application->setMode(TApplicationMode::Debug);
+		}
+		return $application;
 	}
 
 	/**

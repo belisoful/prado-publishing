@@ -280,7 +280,7 @@ messages still carry their key, so registration affects readability, not behavio
 
 ## Requirements
 
-- PHP 8.1+
+- PHP 8.2+
 - `pradosoft/prado` 4.4 (`^4.4@dev` until 4.4.0 is released)
 - `belisoful/prado-image`
 - `ext-gd` for images, and `ext-imagick` for the formats and filters GD cannot do; `ext-dom` for

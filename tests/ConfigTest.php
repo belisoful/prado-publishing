@@ -83,8 +83,8 @@ class ConfigTest extends TestCase
 	}
 
 	/**
-	 * The framework's own messages.txt is consulted last and wins, so a key restated here would
-	 * never be read.  A message file that shadows a core key is dead weight and a trap.
+	 * A registered message file overrides the framework's own messages.txt, so a key restated
+	 * here would replace the framework text of a key this package does not own.
 	 */
 	public function testNoMessageRestatesAKeyTheFrameworkAlreadyDefines(): void
 	{
@@ -94,6 +94,30 @@ class ConfigTest extends TestCase
 		self::assertNotEmpty($ours, 'The package message file defines keys.');
 		self::assertNotEmpty($core, 'The framework message file was located.');
 		self::assertSame([], array_values(array_intersect(array_keys($ours), array_keys($core))), 'No key here is one the framework already defines.');
+	}
+
+	/**
+	 * Every message is an ICU MessageFormat pattern that `TException` formats with
+	 * `\MessageFormatter`.  A placeholder quoted with single apostrophes, `'{0}'`, renders the
+	 * literal text `{0}`, so a quoted placeholder doubles its apostrophes: `''{0}''`.
+	 */
+	public function testEveryMessageIsAnIcuPatternThatRendersItsArguments(): void
+	{
+		$messages = $this->parseMessages(self::CONFIG_DIR . '/errorMessages.txt');
+		self::assertNotEmpty($messages, 'The package message file defines keys.');
+		foreach ($messages as $key => $message) {
+			self::assertDoesNotMatchRegularExpression("/(?<!')'\\{|\\}'(?!')/", $message, "{$key} doubles the apostrophes around a quoted placeholder.");
+			preg_match_all('/\\{(\\d+)\\}/', $message, $matches);
+			$args = [];
+			foreach ($matches[1] as $i) {
+				$args[(int) $i] = "arg{$i}";
+			}
+			$formatted = \MessageFormatter::formatMessage('en', $message, $args);
+			self::assertIsString($formatted, "{$key} is a valid ICU MessageFormat pattern.");
+			foreach ($args as $arg) {
+				self::assertStringContainsString($arg, $formatted, "{$key} renders its arguments.");
+			}
+		}
 	}
 
 	/**

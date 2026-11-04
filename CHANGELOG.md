@@ -7,6 +7,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Follows `pradosoft/prado` 4.4 at `master`.
+
+### Changed
+
+- `config/errorMessages.txt` messages are ICU MessageFormat patterns, as Prado's `TException`
+  now formats them with `\MessageFormatter`: a quoted placeholder is written `''{0}''`, since
+  `'{0}'` renders the literal `{0}`.
+- PHP 8.2 is the minimum, the floor of the framework.
+
+### Fixed
+
+- `TPublishingManager` keeps a linked asset that another process created as a dangling symlink
+  while it was linking, as `TAssetManager` does (`lstat()` in place of `is_file()`/`is_link()`).
+
 ## [0.1.0] - 2026-09-22
 
 The first release: the publishing code, moved out of the Prado framework tree into its own

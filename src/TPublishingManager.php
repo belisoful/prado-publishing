@@ -825,7 +825,7 @@ class TPublishingManager extends TAssetManager
 				try {
 					$this->symlink($this->relativeSymlinkTarget($src, $dst), $dst);
 				} catch (\Throwable $e) {
-					if (!is_file($dst) && !is_link($dst)) {
+					if (@lstat($dst) === false) {
 						throw $e;
 					}
 				}
