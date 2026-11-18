@@ -1045,12 +1045,12 @@ class TAssetTest extends PublishingTestCase
 		$asset->probeCopyDirectory($src, $dst);
 
 		self::assertSame([$src, $dst], $manager->copied[0], 'The directory is copied with the asset manager of the asset.');
-		self::assertCount(2, $manager->copied, 'Its sub-directory as well.');
+		self::assertCount(1, $manager->copied, 'Its sub-directories are walked within the one copy.');
 		self::assertSame('alpha', file_get_contents($dst . '/a.txt'));
 
 		$asset->setAssetManager(null);
 		$asset->probeCopyDirectory($src, $dst = $this->tempDir . DIRECTORY_SEPARATOR . 'copied-by-the-application');
-		self::assertCount(2, $manager->copied, 'Without one, the application asset manager copies it.');
+		self::assertCount(1, $manager->copied, 'Without one, the application asset manager copies it.');
 		self::assertSame('alpha', file_get_contents($dst . '/a.txt'));
 	}
 

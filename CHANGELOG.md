@@ -58,6 +58,8 @@ Follows `pradosoft/prado` 4.4 at `master`, and fixes the findings of a full audi
 
 ### Fixed
 
+- `TPublishingManager::copyDirectoryFile()` writes the file at the destination's name, and
+  `copyDirectory()` follows Prado's `copyDirectoryTree()` walk.
 - `TPublishingManager` keeps a linked asset that another process created as a dangling symlink
   while it was linking, as `TAssetManager` does (`lstat()` in place of `is_file()`/`is_link()`).
 - Security and privacy:

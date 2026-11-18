@@ -25,9 +25,9 @@ class TCopyingPublishingManager extends TPublishingManager
 	/** @var array<array{0:string, 1:string}> the source and destination of each copy, in order. */
 	public array $copied = [];
 
-	public function copyDirectory($src, $dst, $options = [], $basePath = null, &$visited = [])
+	public function copyDirectory($src, $dst, $options = [])
 	{
 		$this->copied[] = [$src, $dst];
-		return parent::copyDirectory($src, $dst, $options, $basePath, $visited);
+		return parent::copyDirectory($src, $dst, $options);
 	}
 }

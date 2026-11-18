@@ -657,8 +657,9 @@ class TPublishingManager extends TAssetManager
 	/**
 	 * Resolves the target of an asset published to a predetermined destination: the
 	 * destination's directory, with the file name of the asset's publish path.
-	 * When the directory entry ($sourcePath) is a symbolic link to the asset's source, the
-	 * asset's rename is applied to the entry's name ({@see renamedFileName}); otherwise,
+	 * When the directory entry ($sourcePath) resolves to the asset's source under another
+	 * name, as a symbolic link does, the asset's rename is applied to the destination's
+	 * name ({@see renamedFileName}); otherwise,
 	 * as for a substituted or virtualized source, the file takes its publish name. A
 	 * renamed file taking the name of another file in the directory publishes as
 	 * {@see collisionFreeName}.
@@ -677,8 +678,8 @@ class TPublishingManager extends TAssetManager
 		$isDir = in_array(substr($path, -1), ['/', '\\'], true);
 		$publishName = basename(rtrim($path, '/\\'));
 		$sourceName = basename(rtrim($source, '/\\'));
-		$fileName = ($sourcePath !== null && basename($sourcePath) !== $sourceName && realpath($sourcePath) === rtrim($source, '/\\'))
-			? static::renamedFileName(basename($sourcePath), $sourceName, $publishName)
+		$fileName = ($sourcePath !== null && basename($destination) !== $sourceName && realpath($sourcePath) === rtrim($source, '/\\'))
+			? static::renamedFileName(basename($destination), $sourceName, $publishName)
 			: $publishName;
 		if (!$isDir) {
 			$entryName = $sourcePath !== null ? basename($sourcePath) : $sourceName;
@@ -687,7 +688,7 @@ class TPublishingManager extends TAssetManager
 		$dstDir = dirname($destination);
 		$dst = $dstDir . DIRECTORY_SEPARATOR . $fileName;
 		$basePath = $this->getBasePathDirect();
-		$url = str_starts_with($dst, $basePath . DIRECTORY_SEPARATOR) ? $this->getBaseUrlDirect() . str_replace(DIRECTORY_SEPARATOR, '/', substr($dst, strlen($basePath))) : '';
+		$url = $basePath !== null && str_starts_with($dst, $basePath . DIRECTORY_SEPARATOR) ? $this->getBaseUrlDirect() . str_replace(DIRECTORY_SEPARATOR, '/', substr($dst, strlen($basePath))) : '';
 		return ['vpath' => rtrim($path, '/\\'), 'isDir' => $isDir, 'fileName' => $fileName, 'source' => rtrim($source, '/\\'), 'key' => $dst, 'dir' => basename($dstDir), 'dstDir' => $dstDir, 'dst' => $dst, 'url' => $url];
 	}
 
@@ -996,17 +997,15 @@ class TPublishingManager extends TAssetManager
 	 * @param string $src the source directory.
 	 * @param string $dst the destination directory.
 	 * @param array $options the publishing options.
-	 * @param ?string $basePath @internal the root source directory.
-	 * @param array $visited @internal the real paths already entered.
 	 */
-	public function copyDirectory($src, $dst, $options = [], $basePath = null, &$visited = [])
+	public function copyDirectory($src, $dst, $options = [])
 	{
 		$atomic = $this->_directoryAtomic;
 		if (array_key_exists('atomic', $options) && $options['atomic'] !== null) {
 			$this->_directoryAtomic = (bool) $options['atomic'];
 		}
 		try {
-			parent::copyDirectory($src, $dst, $options, $basePath, $visited);
+			parent::copyDirectory($src, $dst, $options);
 		} finally {
 			$this->_directoryAtomic = $atomic;
 		}
