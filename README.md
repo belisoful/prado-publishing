@@ -135,7 +135,7 @@ The classes keep their framework namespaces, `Prado\Web` and `Prado\Web\Assets`.
 | `TAssetCacheBuster` | Fingerprints published file names with a content hash or mtime |
 | `TAssetCompress` | Publishes matching files compressed with a Prado codec: `Method` (`gzip`, `br`, `zstd`, `deflate`) or any `ICompressor` `Compressor`, as `name.ext.gz` (`.br`, `.zst`, `.zz`) |
 | `TAssetGZCompress` | The gzip preset of `TAssetCompress` |
-| `TAssetMinify` | Minifies matching JavaScript and CSS (`MatchFiles`, default `.js` and `.css`) under their own names, before compression, with the minifiers of `TJavaScript::setMinifier()` and `TStyleSheetHelper::setMinifier()`; `name.min.ext` files publish as they are |
+| `TAssetMinify` | Minifies matching JavaScript and CSS under their own names, before compression, with the minifiers of `TJavaScript::setMinifier()` and `TStyleSheetHelper::setMinifier()`. `MatchFiles` defaults to `.js` and `.css` outside PRADO's own packages (the framework, `bower-asset`, `npm-asset`); `name.min.ext` files publish as they are; `SkipInDebug` (default true) leaves files unminified in Debug mode |
 | `TAssetImagerBase` | The base imager: `MatchFiles`, `MetaMatch`, the filter configuration, and the finalizer that saves the image |
 | `TAssetImageFilter` | The general imager: runs the image filters and saves the image in its format, with the saving properties |
 | `TAssetJPEGize`, `TAssetPNGize`, `TAssetWebPize`, `TAssetGIFize`, `TAssetBMPize`, `TAssetWBMPize`, `TAssetXBMize`, `TAssetTIFFize` | Convert matching images to a format; `TAssetWebPize` follows the browser's `Accept` header (and still filters and scrubs an image it does not convert), and `TAssetTIFFize` encodes with prado-image (`TiffCompression`) |

@@ -11,6 +11,8 @@
 namespace Prado\Web\Tests\Assets\Behaviors;
 
 use Prado\Exceptions\TIOException;
+use Prado\Prado;
+use Prado\TApplicationMode;
 use Prado\TComponent;
 use Prado\Web\Assets\Behaviors\IAssetMatching;
 use Prado\Web\Assets\Behaviors\TAssetCompress;
@@ -29,10 +31,11 @@ use Prado\Web\Tests\PublishingTestCase;
 /**
  * TAssetMinifyTest class.
  *
- * Tests the minifier: the matching and its default, skipping minified files and files of
- * another language, the finalizer and its priority before TAssetCompress, minifying
+ * Tests the minifier: the matching and its default that leaves PRADO's packages alone,
+ * skipping minified files, files of another language, and Debug mode, the finalizer and its priority before TAssetCompress, minifying
  * JavaScript and CSS in place with the framework minifiers and with minifiers set through
- * setMinifier(), and publishing files, directories, and compressed files end to end.
+ * setMinifier(), and publishing files, directories, and compressed files end to end. The
+ * tests run in Normal mode unless they set Debug mode.
  *
  * @author Brad Anderson <belisoful@icloud.com>
  */
@@ -44,8 +47,19 @@ class TAssetMinifyTest extends PublishingTestCase
 	/** CSS with comments and whitespace to remove. */
 	public const CSS = "/* The page. */\nbody {\n\tmargin: 0;\n\tcolor: #ffffff;\n}\n";
 
+	/** @var string the application mode before the test. */
+	private string $_mode;
+
+	protected function setUp(): void
+	{
+		parent::setUp();
+		$this->_mode = static::application()->getMode();
+		static::application()->setMode(TApplicationMode::Normal);
+	}
+
 	protected function tearDown(): void
 	{
+		static::application()->setMode($this->_mode);
 		TJavaScript::setMinifier(null);
 		TStyleSheetHelper::setMinifier(null);
 		parent::tearDown();
@@ -115,6 +129,96 @@ class TAssetMinifyTest extends PublishingTestCase
 		self::assertNull($minify->getMatchFiles());
 		$minify->setMatchFiles(null);
 		self::assertNull($minify->getMatchFiles());
+	}
+
+	public function testDefaultMatchFilesLeavesPradoPackagesAlone(): void
+	{
+		$expected = [
+			'/app/js/app.js' => true,
+			'/app/css/site.CSS' => true,
+			'/app/framework/app.js' => true,
+			'/app/my-bower-assets/app.js' => true,
+			'/app/notes.txt' => false,
+			'/app/vendor/pradosoft/prado/framework/Web/Javascripts/source/prado/prado.js' => false,
+			'/app/vendor/pradosoft/prado/framework/Web/Javascripts/source/prado/activecontrols/style.css' => false,
+			'/app/vendor/bower-asset/jquery/dist/jquery.js' => false,
+			'/app/vendor/npm-asset/idiomorph/dist/idiomorph.js' => false,
+			'C:\\app\\vendor\\bower-asset\\jquery-ui\\themes\\base\\all.css' => false,
+			'C:\\app\\vendor\\pradosoft\\prado\\framework\\Web\\Javascripts\\source\\prado\\prado.js' => false,
+		];
+		foreach ($expected as $path => $matches) {
+			self::assertSame($matches ? 1 : 0, preg_match(TAssetMinify::DEFAULT_MATCH_FILES, $path), "$path is " . ($matches ? '' : 'not ') . 'matched.');
+		}
+	}
+
+	public function testFrameworkScriptsAreNotMinified(): void
+	{
+		$source = Prado::getFrameworkPath() . '/Web/Javascripts/source/prado/prado.js';
+		if (!str_contains(str_replace('\\', '/', $source), 'pradosoft/prado/framework/')) {
+			self::markTestSkipped('The framework is not installed by Composer.');
+		}
+		$asset = $this->minifyAsset($source);
+
+		self::assertSame([], static::finalizersOf($asset));
+	}
+
+	public function testPublishLeavesAssetPackagesAlone(): void
+	{
+		$this->attachClassBehavior('minify', TAssetMinify::class, TAsset::class);
+		$this->writeSource('vendor/bower-asset/lib/dist/lib.js', self::JS);
+		$this->writeSource('vendor/bower-asset/lib/dist/lib.css', self::CSS);
+
+		$dir = $this->urlToPath($this->newManager()->publish($this->srcDir . '/vendor/bower-asset/lib/dist'));
+
+		self::assertSame(self::JS, file_get_contents($dir . '/lib.js'));
+		self::assertSame(self::CSS, file_get_contents($dir . '/lib.css'));
+	}
+
+	public function testSkipInDebug(): void
+	{
+		$minify = new TAssetMinify();
+		self::assertTrue($minify->getSkipInDebug());
+		self::assertFalse($minify->getIsSkipped(), 'Normal mode is not skipped.');
+
+		static::application()->setMode(TApplicationMode::Debug);
+		self::assertTrue($minify->getIsSkipped(), 'Debug mode is skipped.');
+		$minify->setSkipInDebug('false');
+		self::assertFalse($minify->getSkipInDebug());
+		self::assertFalse($minify->getIsSkipped());
+
+		$minify->setSkipInDebug(true);
+		static::application()->setMode(TApplicationMode::Performance);
+		self::assertFalse($minify->getIsSkipped(), 'Performance mode is not skipped.');
+	}
+
+	public function testDebugModeDoesNotMinify(): void
+	{
+		static::application()->setMode(TApplicationMode::Debug);
+		$asset = $this->minifyAsset($this->writeSource('app.js'));
+		file_put_contents($dst = $this->assetDir . '/out.js', self::JS);
+
+		self::assertSame([], static::finalizersOf($asset));
+		$asset->asa('minify')->finalize($dst, new TAssetEventParameter());
+		self::assertSame(self::JS, file_get_contents($dst), 'Debug mode does not minify.');
+
+		$asset->asa('minify')->setSkipInDebug(false);
+		self::assertSame([$asset->asa('minify')], static::finalizersOf($asset));
+		$asset->asa('minify')->finalize($dst, new TAssetEventParameter());
+		self::assertSame(TJavaScript::minify(self::JS), file_get_contents($dst), 'SkipInDebug false minifies in Debug mode.');
+	}
+
+	public function testPublishInDebugMode(): void
+	{
+		static::application()->setMode(TApplicationMode::Debug);
+		$this->attachClassBehavior('minify', TAssetMinify::class, TAsset::class);
+		$this->attachClassBehavior('debugMinify', ['class' => TAssetMinify::class, 'MatchFiles' => '/\\.css$/', 'SkipInDebug' => 'false'], TAsset::class);
+		$manager = $this->newManager();
+
+		$jsUrl = $manager->publish($this->writeSource('app.js', self::JS));
+		$cssUrl = $manager->publish($this->writeSource('site.css', self::CSS));
+
+		self::assertSame(self::JS, file_get_contents($this->urlToPath($jsUrl)));
+		self::assertSame(TStyleSheetHelper::minify(self::CSS), file_get_contents($this->urlToPath($cssUrl)));
 	}
 
 	public function testLanguage(): void
