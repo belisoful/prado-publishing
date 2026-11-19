@@ -23,6 +23,7 @@
 	"TAssetImageMetaDataMode": "Prado\\Web\\Assets\\Behaviors\\TAssetImageMetaDataMode",
 	"TAssetImagerBase": "Prado\\Web\\Assets\\Behaviors\\TAssetImagerBase",
 	"TAssetJPEGize": "Prado\\Web\\Assets\\Behaviors\\TAssetJPEGize",
+	"TAssetMinify": "Prado\\Web\\Assets\\Behaviors\\TAssetMinify",
 	"TAssetPNGColorMode": "Prado\\Web\\Assets\\Behaviors\\TAssetPNGColorMode",
 	"TAssetPNGize": "Prado\\Web\\Assets\\Behaviors\\TAssetPNGize",
 	"TAssetTIFFize": "Prado\\Web\\Assets\\Behaviors\\TAssetTIFFize",

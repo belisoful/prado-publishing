@@ -48,6 +48,9 @@ assetcompress_method_invalid				= TAssetCompress.Method ''{0}'' is not a content
 assetcompress_extension_required			= TAssetCompress.Compressor ''{0}'' has an unknown format; set the Extension.
 assetcompress_compressor_invalid			= TAssetCompress.Compressor ''{0}'' is not a Prado\IO\Compression\ICompressor class.
 
+assetminify_read_failed						= TAssetMinify cannot read the published file ''{0}''.
+assetminify_write_failed					= TAssetMinify cannot write the minified file ''{0}''.
+
 assetdiscovery_requires_class				= TAssetDiscovery.RoutedClass is required to route matching asset file paths.
 assetduplicate_recursive					= TAssetDuplicate is recursing: MatchFiles ''{0}'' with MatchReplacement ''{1}'' still matches the duplicate ''{2}''.
 assetduplicate_requires_publishing_manager	= TAssetDuplicate requires a Prado\Web\TPublishingManager to publish the duplicate of ''{0}''.
