@@ -1,9 +1,9 @@
 # prado-publishing
 
 `TPublishingManager` for [Prado](https://github.com/pradosoft/prado): a `TAssetManager` that
-publishes files through asset objects, so behaviors can rename, virtualize, block, compress,
-and process them, including image resizing, format conversion, and image metadata preservation
-and scrubbing.
+publishes files through asset objects, so behaviors can rename, virtualize, block, minify,
+compress, and process them, including image resizing, format conversion, and image metadata
+preservation and scrubbing.
 
 `TPublishingManager` extends `TAssetManager` and keeps all of its features: the base path and
 URL, the hashed publishing directories, the publishing options (`only`, `except`,
@@ -27,11 +27,13 @@ Replace the application's asset manager module:
 ```
 
 Then attach behaviors to the asset classes. This fingerprints scripts and stylesheets for
-cache busting, and serves them gzip-compressed:
+cache busting, minifies them, and serves them gzip-compressed:
 
 ```xml
 <behavior name="cacheBuster" Class="Prado\Web\Assets\Behaviors\TAssetCacheBuster"
     AttachToClass="Prado\Web\Assets\TAsset" MatchFiles="/\.(js|css)$/i" HashLength="8" />
+<behavior name="minify" Class="Prado\Web\Assets\Behaviors\TAssetMinify"
+    AttachToClass="Prado\Web\Assets\TAsset" />
 <behavior name="gzip" Class="Prado\Web\Assets\Behaviors\TAssetCompress"
     AttachToClass="Prado\Web\Assets\TAsset" MatchFiles="/\.(js|css)$/i" Method="gzip" />
 ```
@@ -64,9 +66,10 @@ an `IAsset` object, each file of a published directory, and a tar archive from
    extension, `TAssetCacheBuster` adds a fingerprint, and `TAssetCompress` appends `.gz`. The
    published location is the `TAssetManager` hashed directory of that path.
 3. **Write.** The asset writes itself to a temporary file and raises `onProcessAsset` on it.
-   Image behaviors process the file there, and finalizers (image saving, then gzip) run in
-   priority order. The file then moves into place, so a reader never sees it half processed. Only
-   an unchanged copy with `Atomic` off is written in place. A failed write publishes nothing.
+   Image behaviors process the file there, and finalizers (image saving, then minifying, then
+   gzip) run in priority order. The file then moves into place, so a reader never sees it half
+   processed. Only an unchanged copy with `Atomic` off is written in place. A failed write
+   publishes nothing.
 
 A directory publishes with the `TAssetManager` directory walk and completion marker (its
 `copyDirectoryFile()` hook), but each file in it publishes as its own asset, under its name with
@@ -132,6 +135,7 @@ The classes keep their framework namespaces, `Prado\Web` and `Prado\Web\Assets`.
 | `TAssetCacheBuster` | Fingerprints published file names with a content hash or mtime |
 | `TAssetCompress` | Publishes matching files compressed with a Prado codec: `Method` (`gzip`, `br`, `zstd`, `deflate`) or any `ICompressor` `Compressor`, as `name.ext.gz` (`.br`, `.zst`, `.zz`) |
 | `TAssetGZCompress` | The gzip preset of `TAssetCompress` |
+| `TAssetMinify` | Minifies matching JavaScript and CSS (`MatchFiles`, default `.js` and `.css`) under their own names, before compression, with the minifiers of `TJavaScript::setMinifier()` and `TStyleSheetHelper::setMinifier()`; `name.min.ext` files publish as they are |
 | `TAssetImagerBase` | The base imager: `MatchFiles`, `MetaMatch`, the filter configuration, and the finalizer that saves the image |
 | `TAssetImageFilter` | The general imager: runs the image filters and saves the image in its format, with the saving properties |
 | `TAssetJPEGize`, `TAssetPNGize`, `TAssetWebPize`, `TAssetGIFize`, `TAssetBMPize`, `TAssetWBMPize`, `TAssetXBMize`, `TAssetTIFFize` | Convert matching images to a format; `TAssetWebPize` follows the browser's `Accept` header (and still filters and scrubs an image it does not convert), and `TAssetTIFFize` encodes with prado-image (`TiffCompression`) |

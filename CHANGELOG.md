@@ -11,6 +11,9 @@ Follows `pradosoft/prado` 4.4 at `master`, and fixes the findings of a full audi
 
 ### Added
 
+- `TAssetMinify` minifies published JavaScript (`.js`, `.mjs`, `.cjs`) and CSS in place with
+  `TJavaScript::minify()` and `TStyleSheetHelper::minify()`, keeping the file name, before
+  `TAssetCompress`. `MatchFiles` defaults to `.js` and `.css`; `name.min.ext` files are skipped.
 - `TAssetImagerBase::MaximumPixels` (default 50 megapixels): an image that declares more pixels
   is rejected before it is decoded (`assetimagerbase_image_too_large`), and the Imagick area
   limit of the process is lowered to it.
