@@ -11,6 +11,8 @@
 namespace Prado\Web\Assets\Behaviors;
 
 use Prado\Exceptions\TIOException;
+use Prado\Prado;
+use Prado\TApplicationMode;
 use Prado\TPropertyValue;
 use Prado\Util\TBehavior;
 use Prado\Web\Assets\IAssetFinalizer;
@@ -27,8 +29,15 @@ use Prado\Web\Javascripts\TStyleSheetHelper;
  * uses the {@see \Prado\Web\Javascripts\IMinifier} set with their `setMinifier()`. A matching
  * file of another extension is left as it is.
  *
- * A file already named "name.min.ext" is left as it is, whatever {@see setMatchFiles
- * MatchFiles} matches.
+ * {@see setMatchFiles MatchFiles} defaults to the ".js" and ".css" files outside PRADO's
+ * own packages: the framework ("pradosoft/prado/framework") and its Composer asset packages
+ * ("bower-asset" and "npm-asset"), which {@see \Prado\Web\UI\TClientScriptManager} minifies
+ * itself outside Debug mode. A file already named "name.min.ext" is left as it is, whatever
+ * MatchFiles matches.
+ *
+ * In Debug mode nothing is minified, as in the framework, unless {@see setSkipInDebug
+ * SkipInDebug} is false. The published name is the same in every mode, so a file published
+ * minified stays minified after a switch to Debug mode until it publishes again.
  *
  * The published name does not change. Minified code means the same as its source, so the
  * URLs that pages, scripts, and stylesheets build from a published directory still resolve,
@@ -50,8 +59,8 @@ class TAssetMinify extends TBehavior implements IAssetMatching, IAssetFinalizer
 	/** The finalizer priority; minifying runs before {@see TAssetCompress}. */
 	public const FINALIZER_PRIORITY = 90;
 
-	/** The default regular expression matching the file paths to minify. */
-	public const DEFAULT_MATCH_FILES = '/\.(js|css)$/i';
+	/** The default regular expression matching the file paths to minify: ".js" and ".css" outside PRADO's packages. */
+	public const DEFAULT_MATCH_FILES = '/^(?!.*[\/\\\\](?:pradosoft[\/\\\\]prado[\/\\\\]framework|bower-asset|npm-asset)[\/\\\\]).*\.(js|css)$/i';
 
 	/** The regular expression matching the file paths already minified. */
 	public const MINIFIED_FILES = '/\.min\.[^.\/\\\\]+$/i';
@@ -61,6 +70,9 @@ class TAssetMinify extends TBehavior implements IAssetMatching, IAssetFinalizer
 
 	/** @var ?string the regular expression matching the file paths to minify. */
 	private ?string $_matchFiles = self::DEFAULT_MATCH_FILES;
+
+	/** @var bool whether nothing is minified in Debug mode. */
+	private bool $_skipInDebug = true;
 
 	/**
 	 * @return array the events and handlers to automatically attach and detach
@@ -87,6 +99,31 @@ class TAssetMinify extends TBehavior implements IAssetMatching, IAssetFinalizer
 	{
 		$value = TPropertyValue::ensureString($value);
 		$this->_matchFiles = $value === '' ? null : $value;
+	}
+
+	/**
+	 * @return bool whether nothing is minified in Debug mode, default true.
+	 */
+	public function getSkipInDebug(): bool
+	{
+		return $this->_skipInDebug;
+	}
+
+	/**
+	 * @param bool|string $value whether nothing is minified in Debug mode.
+	 */
+	public function setSkipInDebug($value): void
+	{
+		$this->_skipInDebug = TPropertyValue::ensureBoolean($value);
+	}
+
+	/**
+	 * @return bool whether minifying is skipped: SkipInDebug is true and the application
+	 *   is in Debug mode.
+	 */
+	public function getIsSkipped(): bool
+	{
+		return $this->_skipInDebug && Prado::getApplication()?->getMode() === TApplicationMode::Debug;
 	}
 
 	/**
@@ -131,13 +168,14 @@ class TAssetMinify extends TBehavior implements IAssetMatching, IAssetFinalizer
 
 	/**
 	 * @param mixed $filePath the asset file path.
-	 * @return bool whether a file path is minified: the behavior is enabled, the path matches
-	 *   {@see getMatchFiles MatchFiles}, is not already minified (see {@see MINIFIED_FILES}),
-	 *   and has a language (see {@see LANGUAGES}).
+	 * @return bool whether a file path is minified: the behavior is enabled and not
+	 *   {@see getIsSkipped skipped}, and the path matches {@see getMatchFiles MatchFiles},
+	 *   is not already minified (see {@see MINIFIED_FILES}), and has a language (see
+	 *   {@see LANGUAGES}).
 	 */
 	protected function getAppliesTo($filePath): bool
 	{
-		return $this->getEnabled() && ($match = $this->getMatchFiles()) !== null
+		return $this->getEnabled() && !$this->getIsSkipped() && ($match = $this->getMatchFiles()) !== null
 			&& is_string($filePath) && $filePath !== '' && preg_match($match, $filePath) === 1
 			&& preg_match(static::MINIFIED_FILES, $filePath) !== 1
 			&& static::getLanguage($filePath) !== null;
